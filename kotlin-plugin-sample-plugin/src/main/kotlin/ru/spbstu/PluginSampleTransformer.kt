@@ -16,131 +16,96 @@
 
 package ru.spbstu
 
-import org.jetbrains.kotlin.backend.common.DataClassMethodGenerator
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
-import org.jetbrains.kotlin.backend.common.ir.asSimpleLambda
-import org.jetbrains.kotlin.backend.common.ir.inline
+import org.jetbrains.kotlin.backend.common.ir.copyTo
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
-import org.jetbrains.kotlin.backend.jvm.codegen.AnnotationCodegen.Companion.annotationClass
-import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
-import org.jetbrains.kotlin.descriptors.FunctionDescriptor
-import org.jetbrains.kotlin.descriptors.TypeParameterDescriptor
-import org.jetbrains.kotlin.descriptors.ValueParameterDescriptor
-import org.jetbrains.kotlin.ir.IrElement
+import org.jetbrains.kotlin.descriptors.*
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI
-import org.jetbrains.kotlin.ir.backend.js.utils.asString
-import org.jetbrains.kotlin.ir.backend.js.utils.isEqualsInheritedFromAny
-import org.jetbrains.kotlin.ir.builders.*
+import org.jetbrains.kotlin.ir.backend.js.utils.getSingleConstStringArgument
+import org.jetbrains.kotlin.ir.builders.declarations.addFunction
 import org.jetbrains.kotlin.ir.declarations.*
-import org.jetbrains.kotlin.ir.expressions.*
-import org.jetbrains.kotlin.ir.interpreter.toIrConst
-import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
-import org.jetbrains.kotlin.ir.symbols.IrSimpleFunctionSymbol
-import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
 import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.FqName
-import org.jetbrains.kotlin.psi.declarationRecursiveVisitor
-import org.jetbrains.kotlin.util.OperatorNameConventions
+import org.jetbrains.kotlin.name.Name
 
 class PluginSampleTransformer(
-  private val file: IrFile,
-  private val fileSource: String,
-  private val context: IrPluginContext,
-  private val messageCollector: MessageCollector,
-  private val functions: Set<FqName>
+    private val file: IrFile,
+    private val fileSource: String,
+    private val context: IrPluginContext,
+    private val messageCollector: MessageCollector,
+    private val functions: Set<FqName>
 ) : IrElementTransformerVoidWithContext() {
 
-  @OptIn(ObsoleteDescriptorBasedAPI::class)
-  override fun visitClassNew(declaration: IrClass): IrStatement {
-    val builder = DeclarationIrBuilder(context, currentScope!!.scope.scopeOwnerSymbol)
+    private val any = context.irBuiltIns.anyClass.owner
+    private val equals = any.functions.single { it.name == Name.identifier("equals") }
+    private val hashCode = any.functions.single { it.name == Name.identifier("hashCode") }
 
-    val dmg = object: DataClassMembersGenerator(
-      context,
-      context.symbolTable as SymbolTable,
-      declaration,
-      declaration.origin
-    ) {
-      override fun declareSimpleFunction(
-        startOffset: Int,
-        endOffset: Int,
-        functionDescriptor: FunctionDescriptor
-      ): IrFunction {
-        TODO()
-      }
+    @OptIn(ObsoleteDescriptorBasedAPI::class)
+    override fun visitClassNew(declaration: IrClass): IrStatement {
+        val annotation = declaration.getAnnotation(FqName("DataLike"))
+            ?: return super.visitClassNew(declaration)
 
-      override fun generateSyntheticFunctionParameterDeclarations(irFunction: IrFunction) {}
+        println(annotation.getArgumentsWithSymbols().map {
+            "${it.first} = ${it.second.dump()}"
+        })
+        val dmg = MemberGenerator(context, declaration)
 
-      private fun getHashCodeFunction(klass: IrClass): IrSimpleFunctionSymbol =
-        klass.functions.singleOrNull {
-          it.name.asString() == "hashCode" && it.valueParameters.isEmpty() && it.extensionReceiverParameter == null
-        }?.symbol
-          ?: context.irBuiltIns.anyClass.functions.single { it.owner.name.asString() == "hashCode" }
+        val newEquals = declaration.overrideFunction(equals)
 
-      private val IrTypeParameter.erasedUpperBound: IrClass
-        get() {
-          // Pick the (necessarily unique) non-interface upper bound if it exists
-          for (type in superTypes) {
-            val irClass = type.classOrNull?.owner ?: continue
-            if (!irClass.isInterface && !irClass.isAnnotationClass) return irClass
-          }
+        dmg.generateEqualsMethod(
+            newEquals,
+            declaration.properties.toList()
+        )
 
-          // Otherwise, choose either the first IrClass supertype or recurse.
-          // In the first case, all supertypes are interface types and the choice was arbitrary.
-          // In the second case, there is only a single supertype.
-          return when (val firstSuper = superTypes.first().classifierOrNull?.owner) {
-            is IrClass -> firstSuper
-            is IrTypeParameter -> firstSuper.erasedUpperBound
-            else -> error("unknown supertype kind $firstSuper")
-          }
-        }
+        val newHashCode = declaration.overrideFunction(hashCode)
 
+        dmg.generateHashCodeMethod(
+            newHashCode,
+            declaration.properties.toList()
+        )
 
-      override fun getHashCodeFunctionInfo(type: IrType): HashCodeFunctionInfo {
-        val classifier = type.classifierOrNull
-        val symbol = when {
-          classifier.isArrayOrPrimitiveArray -> context.irBuiltIns.dataClassArrayMemberHashCodeSymbol
-          classifier is IrClassSymbol -> getHashCodeFunction(classifier.owner)
-          classifier is IrTypeParameterSymbol -> getHashCodeFunction(classifier.owner.erasedUpperBound)
-          else -> error("Unknown classifier kind $classifier")
-        }
-        return object: HashCodeFunctionInfo {
-          override val symbol: IrSimpleFunctionSymbol = symbol
-          override fun commitSubstituted(irMemberAccessExpression: IrMemberAccessExpression<*>) {}
-        }
-      }
+        messageCollector.report(CompilerMessageSeverity.INFO,
+            declaration.declarations.joinToString("\n") { it.dump() })
 
-      override fun getProperty(parameter: ValueParameterDescriptor?, irValueParameter: IrValueParameter?): IrProperty? {
-        return declaration.properties.single {
-          it.name == irValueParameter?.name && it.getter?.returnType == irValueParameter.type }
-      }
-
-      override fun transform(typeParameterDescriptor: TypeParameterDescriptor): IrType =
-        context.irBuiltIns.anyType
+        return super.visitClassNew(declaration)
     }
-    dmg.generateEqualsMethod(
-      declaration.functions.find { it.isEqualsInheritedFromAny() }!!,
-      declaration.properties.toList()
-    )
 
-    messageCollector.report(CompilerMessageSeverity.INFO,
-      declaration.declarations.joinToString("\n") { it.dump() })
+}
 
-    return super.visitClassNew(declaration)
-  }
+private fun IrClass.overrideFunction(original: IrSimpleFunction): IrSimpleFunction {
+    val existingIndex = declarations.indexOfFirst {
+        it is IrFunction &&
+        it.name == original.name &&
+        (it.dispatchReceiverParameter == null) == (original.dispatchReceiverParameter == null) &&
+        it.valueParameters.map { it.type } == original.valueParameters.map { it.type }
+    }
+    require(existingIndex != -1)
+    val existing = declarations[existingIndex]
+    require(existing is IrSimpleFunction)
 
-  override fun visitCall(expression: IrCall): IrExpression {
-    val func = expression.symbol.owner.kotlinFqName
-    System.err.println("$expression")
-    //if (func !in functions) return super.visitCall(expression)
+    val result = addFunction {
+        updateFrom(existing)
+        this.name = existing.name
+        this.returnType = existing.returnType
+        this.modality = Modality.FINAL
+        this.visibility = DescriptorVisibilities.PUBLIC
+        this.isSuspend = false
+        this.isFakeOverride = false
+        this.origin = IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER
+    }
 
-    messageCollector.report(CompilerMessageSeverity.WARNING, "Hello, ${expression.symbol.owner.kotlinFqName.asString()}",)
-    val builder = DeclarationIrBuilder(context, currentScope!!.scope.scopeOwnerSymbol)
-    return builder.irInt(2)
-  }
+    result.parent = this
+    result.dispatchReceiverParameter = thisReceiver?.copyTo(result)
+    result.valueParameters =
+        existing.valueParameters.map { it.copyTo(result, IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER) }
 
+    result.overriddenSymbols = existing.overriddenSymbols
+
+    declarations.remove(existing)
+    return result
 }

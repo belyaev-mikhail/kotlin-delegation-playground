@@ -56,7 +56,7 @@ fun executeSource(
   try {
     return main.invoke(null)
   } catch (t: Throwable) {
-    return t.message!!
+    return t
   }
 }
 

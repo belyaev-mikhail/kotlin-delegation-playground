@@ -21,13 +21,24 @@ import org.junit.Test
 import kotlin.test.assertEquals
 
 class CompilerTest {
-  @Test
-  fun simple() {
-    assertEquals(2, executeExpr("2"))
-    assertEquals(2, executeSource("""
-      class Data(val x: Int)
-      fun foo() = 59
-      fun main(): Int = foo()
-    """))
-  }
+    @Test
+    fun simple() {
+        assertEquals(2, executeExpr("2"))
+        assertEquals(
+            2, executeSource(
+                """
+        annotation class DataLike(val genEquals: Boolean = true)
+const val dddd = false
+      @DataLike(dddd)
+      class Data(val x: Int, val y: List<String>?) {
+      }
+      fun main(): Int {
+        val data1 = Data(1, listOf())
+        println(data1)
+        return if (Data(2, listOf()) == Data(2, listOf())) 2 else 3
+      }
+    """
+            )
+        )
+    }
 }
