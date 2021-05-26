@@ -17,17 +17,25 @@
 package ru.spbstu
 
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
+import org.jetbrains.kotlin.backend.common.ScopeWithIr
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.ir.copyTo
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
+import org.jetbrains.kotlin.backend.wasm.ir2wasm.allSuperInterfaces
+import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.descriptors.*
+import org.jetbrains.kotlin.fir.resolve.dfa.stackOf
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI
+import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.backend.js.utils.getSingleConstStringArgument
+import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.builders.declarations.addFunction
+import org.jetbrains.kotlin.ir.builders.declarations.buildVariable
 import org.jetbrains.kotlin.ir.declarations.*
+import org.jetbrains.kotlin.ir.declarations.impl.IrVariableImpl
 import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.FqName
@@ -46,10 +54,36 @@ class PluginSampleTransformer(
     private val hashCode = any.functions.single { it.name == Name.identifier("hashCode") }
     private val toString = any.functions.single { it.name == Name.identifier("toString") }
 
+
     @OptIn(ObsoleteDescriptorBasedAPI::class)
     override fun visitClassNew(declaration: IrClass): IrStatement {
         val annotation = declaration.getAnnotation(FqName("DataLike"))
             ?: return super.visitClassNew(declaration)
+
+        val comparable = context.referenceClass(StandardNames.BUILT_INS_PACKAGE_FQ_NAME.child(Name.identifier("Comparable")))
+        require(comparable != null)
+        val actualComparable = comparable.typeWith(declaration.defaultType)
+
+        if (declaration.superTypes.any { it.isSubtypeOf(actualComparable, context.irBuiltIns) }) {
+            val compareTo = comparable.owner.functions.single { it.name == Name.identifier("compareTo") }
+            val newCompareTo = declaration.overrideFunction(compareTo)
+
+            newCompareTo.body = IrBlockBodyBuilder(context, Scope(newCompareTo.symbol), UNDEFINED_OFFSET, UNDEFINED_OFFSET).blockBody {
+                val variable = buildVariable(
+                    newCompareTo,
+                    UNDEFINED_OFFSET,
+                    UNDEFINED_OFFSET,
+                    IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER,
+                    Name.identifier("result"),
+                    context.irBuiltIns.intType,
+                    isVar = true
+                ).apply { initializer = irInt(0) }
+
+                +variable
+                +irSet(variable.symbol, irInt(0))
+                +irReturn(irGet(variable))
+            }
+        }
 
         println(annotation.getArgumentsWithSymbols().map {
             "${it.first} = ${it.second.dump()}"
