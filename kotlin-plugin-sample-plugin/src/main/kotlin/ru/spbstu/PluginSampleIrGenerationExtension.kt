@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Brian Norman
+ * Copyright (C) 2021 Mikhail Belyaev
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.

@@ -44,6 +44,7 @@ class PluginSampleTransformer(
     private val any = context.irBuiltIns.anyClass.owner
     private val equals = any.functions.single { it.name == Name.identifier("equals") }
     private val hashCode = any.functions.single { it.name == Name.identifier("hashCode") }
+    private val toString = any.functions.single { it.name == Name.identifier("toString") }
 
     @OptIn(ObsoleteDescriptorBasedAPI::class)
     override fun visitClassNew(declaration: IrClass): IrStatement {
@@ -71,6 +72,10 @@ class PluginSampleTransformer(
 
         messageCollector.report(CompilerMessageSeverity.INFO,
             declaration.declarations.joinToString("\n") { it.dump() })
+
+        val newToString = declaration.overrideFunction(toString)
+
+        dmg.generateToStringMethod(newToString, declaration.properties.toList())
 
         return super.visitClassNew(declaration)
     }
