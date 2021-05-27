@@ -41,6 +41,8 @@ import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 
+object SAMPLE_PLUGIN_GENERATED_ORIGIN: IrDeclarationOriginImpl("SAMPLE_PLUGIN_GENERATED_ORIGIN", true)
+
 class PluginSampleTransformer(
     private val file: IrFile,
     private val fileSource: String,
@@ -49,7 +51,8 @@ class PluginSampleTransformer(
     private val functions: Set<FqName>
 ) : IrElementTransformerVoidWithContext() {
 
-    private val any = context.irBuiltIns.anyClass.owner
+    private val irBuiltins = context.irBuiltIns
+    private val any = irBuiltins.anyClass.owner
     private val equals = any.functions.single { it.name == Name.identifier("equals") }
     private val hashCode = any.functions.single { it.name == Name.identifier("hashCode") }
     private val toString = any.functions.single { it.name == Name.identifier("toString") }
@@ -73,7 +76,7 @@ class PluginSampleTransformer(
                     newCompareTo,
                     UNDEFINED_OFFSET,
                     UNDEFINED_OFFSET,
-                    IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER,
+                    SAMPLE_PLUGIN_GENERATED_ORIGIN,
                     Name.identifier("result"),
                     context.irBuiltIns.intType,
                     isVar = true
@@ -81,6 +84,7 @@ class PluginSampleTransformer(
 
                 +variable
                 +irSet(variable.symbol, irInt(0))
+                +irIfThen(irBuiltins.unitType, irNotEquals(irGet(variable), irInt(0)), irReturn(irGet(variable)))
                 +irReturn(irGet(variable))
             }
         }
@@ -135,13 +139,13 @@ private fun IrClass.overrideFunction(original: IrSimpleFunction): IrSimpleFuncti
         this.visibility = DescriptorVisibilities.PUBLIC
         this.isSuspend = false
         this.isFakeOverride = false
-        this.origin = IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER
+        this.origin = SAMPLE_PLUGIN_GENERATED_ORIGIN
     }
 
     result.parent = this
-    result.dispatchReceiverParameter = thisReceiver?.copyTo(result)
+    result.dispatchReceiverParameter = thisReceiver?.copyTo(result, origin = SAMPLE_PLUGIN_GENERATED_ORIGIN)
     result.valueParameters =
-        existing.valueParameters.map { it.copyTo(result, IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER) }
+        existing.valueParameters.map { it.copyTo(result, origin = SAMPLE_PLUGIN_GENERATED_ORIGIN) }
 
     result.overriddenSymbols = existing.overriddenSymbols
 
