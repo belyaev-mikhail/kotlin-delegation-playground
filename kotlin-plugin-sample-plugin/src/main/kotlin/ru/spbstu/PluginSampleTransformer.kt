@@ -36,6 +36,8 @@ import org.jetbrains.kotlin.ir.builders.declarations.addFunction
 import org.jetbrains.kotlin.ir.builders.declarations.buildVariable
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.declarations.impl.IrVariableImpl
+import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.impl.IrGetValueImpl
 import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.FqName
@@ -57,6 +59,37 @@ class PluginSampleTransformer(
     private val hashCode = any.functions.single { it.name == Name.identifier("hashCode") }
     private val toString = any.functions.single { it.name == Name.identifier("toString") }
 
+    fun IrBuilderWithScope.irGetProperty(receiver: IrExpression, property: IrProperty): IrExpression {
+        // In some JVM-specific cases, such as when 'allopen' compiler plugin is applied,
+        // data classes and corresponding properties can be non-final.
+        // We should use getters for such properties (see KT-41284).
+        val backingField = property.backingField
+        return if (property.modality == Modality.FINAL && backingField != null) {
+            irGetField(receiver, backingField)
+        } else {
+            irCall(property.getter!!).apply {
+                dispatchReceiver = receiver
+            }
+        }
+    }
+
+    fun IrBuilderWithScope.irThis(irFunction: IrFunction): IrExpression {
+        val irDispatchReceiverParameter = irFunction.dispatchReceiverParameter!!
+        return IrGetValueImpl(
+            startOffset, endOffset,
+            irDispatchReceiverParameter.type,
+            irDispatchReceiverParameter.symbol
+        )
+    }
+
+    fun IrBuilderWithScope.irFirst(irFunction: IrFunction): IrExpression {
+        val irDispatchReceiverParameter = irFunction.valueParameters.first()
+        return IrGetValueImpl(
+            startOffset, endOffset,
+            irDispatchReceiverParameter.type,
+            irDispatchReceiverParameter.symbol
+        )
+    }
 
     @OptIn(ObsoleteDescriptorBasedAPI::class)
     override fun visitClassNew(declaration: IrClass): IrStatement {
@@ -69,7 +102,7 @@ class PluginSampleTransformer(
 
         if (declaration.superTypes.any { it.isSubtypeOf(actualComparable, context.irBuiltIns) }) {
             val compareTo = comparable.owner.functions.single { it.name == Name.identifier("compareTo") }
-            val newCompareTo = declaration.overrideFunction(compareTo)
+            val newCompareTo = declaration.overrideFunction(declaration.functions.first { it.overrides(compareTo) })
 
             newCompareTo.body = IrBlockBodyBuilder(context, Scope(newCompareTo.symbol), UNDEFINED_OFFSET, UNDEFINED_OFFSET).blockBody {
                 val variable = buildVariable(
@@ -83,9 +116,18 @@ class PluginSampleTransformer(
                 ).apply { initializer = irInt(0) }
 
                 +variable
-                +irSet(variable.symbol, irInt(0))
-                +irIfThen(irBuiltins.unitType, irNotEquals(irGet(variable), irInt(0)), irReturn(irGet(variable)))
-                +irReturn(irGet(variable))
+                for (property in declaration.properties) {
+                    val prop = irGetProperty(irThis(newCompareTo), property)
+                    val otherProp = irGetProperty(irFirst(newCompareTo), property)
+
+                    val cmp = irCall(compareTo).apply {
+                        dispatchReceiver = prop
+                        putValueArgument(0, otherProp)
+                    }
+                    +irSet(variable.symbol, cmp)
+                    +irIfThen(irBuiltins.unitType, irNotEquals(irGet(variable), irInt(0)), irReturn(irGet(variable)))
+                }
+                +irReturn(irInt(0))
             }
         }
 

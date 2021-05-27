@@ -31,7 +31,8 @@ class CompilerTest {
         annotation class DataLike(val genEquals: Boolean = true)
 const val dddd = false
       @DataLike(dddd)
-      class Data(val x: Int, val y: List<String>?) {
+      class Data(val x: Int, val y: List<String>?): Comparable<Data> {
+        override fun compareTo(other: Data): Int = TODO()
       }
       fun main(): Int {
         val data1 = Data(1, listOf())
