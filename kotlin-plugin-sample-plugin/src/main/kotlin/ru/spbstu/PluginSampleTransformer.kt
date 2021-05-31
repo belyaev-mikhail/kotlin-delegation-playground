@@ -91,6 +91,41 @@ class PluginSampleTransformer(
         )
     }
 
+    fun IrBuilderWithScope.variable(
+        parent: IrDeclarationParent? = this.parent,
+        startOffset: Int = UNDEFINED_OFFSET,
+        endOffset: Int = UNDEFINED_OFFSET,
+        origin: IrDeclarationOrigin = SAMPLE_PLUGIN_GENERATED_ORIGIN,
+        name: Name,
+        isVar: Boolean = false,
+        isConst: Boolean = false,
+        isLateinit: Boolean = false,
+        initializer: IrExpression? = null,
+        type: IrType? = null
+    ): IrVariable {
+        require(initializer != null || type != null)
+        val result = buildVariable(
+            parent = parent,
+            startOffset = startOffset,
+            endOffset = endOffset,
+            origin = origin,
+            name = name,
+            type = type ?: initializer!!.type,
+            isVar = isVar,
+            isConst = isConst,
+            isLateinit = isLateinit
+        )
+        initializer?.let { result.initializer = initializer }
+        return result
+    }
+
+    fun IrFunction.buildBlockBody(context: IrGeneratorContext,
+                                  startOffset: Int = UNDEFINED_OFFSET,
+                                  endOffset: Int = UNDEFINED_OFFSET,
+                                  building: IrBlockBodyBuilder.() -> Unit) {
+        this.body = IrBlockBodyBuilder(context, Scope(this.symbol), startOffset, endOffset).blockBody(building)
+    }
+
     @OptIn(ObsoleteDescriptorBasedAPI::class)
     override fun visitClassNew(declaration: IrClass): IrStatement {
         val annotation = declaration.getAnnotation(FqName("DataLike"))
@@ -104,18 +139,12 @@ class PluginSampleTransformer(
             val compareTo = comparable.owner.functions.single { it.name == Name.identifier("compareTo") }
             val newCompareTo = declaration.overrideFunction(declaration.functions.first { it.overrides(compareTo) })
 
-            newCompareTo.body = IrBlockBodyBuilder(context, Scope(newCompareTo.symbol), UNDEFINED_OFFSET, UNDEFINED_OFFSET).blockBody {
-                val variable = buildVariable(
-                    newCompareTo,
-                    UNDEFINED_OFFSET,
-                    UNDEFINED_OFFSET,
-                    SAMPLE_PLUGIN_GENERATED_ORIGIN,
-                    Name.identifier("result"),
-                    context.irBuiltIns.intType,
+            newCompareTo.buildBlockBody(context) {
+                val variable = variable(
+                    name = Name.identifier("result"),
+                    initializer = irInt(0),
                     isVar = true
-                ).apply { initializer = irInt(0) }
-
-                +variable
+                )
                 for (property in declaration.properties) {
                     val prop = irGetProperty(irThis(newCompareTo), property)
                     val otherProp = irGetProperty(irFirst(newCompareTo), property)
