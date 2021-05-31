@@ -27,6 +27,7 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.descriptors.*
 import org.jetbrains.kotlin.fir.resolve.dfa.stackOf
+import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
@@ -73,7 +74,16 @@ class PluginSampleTransformer(
         }
     }
 
-    fun IrBuilderWithScope.irThis(irFunction: IrFunction): IrExpression {
+    fun IrDeclarationParent.containingFunction(): IrFunction {
+        return when(val parent = this) {
+            is IrFunction -> parent
+            !is IrDeclaration -> throw IllegalStateException()
+            else -> parent.parent.containingFunction()
+        }
+    }
+
+    fun IrBuilderWithScope.irThis(function: IrFunction? = null): IrExpression {
+        val irFunction = function ?: parent.containingFunction()
         val irDispatchReceiverParameter = irFunction.dispatchReceiverParameter!!
         return IrGetValueImpl(
             startOffset, endOffset,
@@ -82,7 +92,8 @@ class PluginSampleTransformer(
         )
     }
 
-    fun IrBuilderWithScope.irFirst(irFunction: IrFunction): IrExpression {
+    fun IrBuilderWithScope.irFirst(function: IrFunction? = null): IrExpression {
+        val irFunction = function ?: parent.containingFunction()
         val irDispatchReceiverParameter = irFunction.valueParameters.first()
         return IrGetValueImpl(
             startOffset, endOffset,
@@ -91,7 +102,7 @@ class PluginSampleTransformer(
         )
     }
 
-    fun IrBuilderWithScope.variable(
+    fun <T: IrElement> IrStatementsBuilder<T>.irVariable(
         parent: IrDeclarationParent? = this.parent,
         startOffset: Int = UNDEFINED_OFFSET,
         endOffset: Int = UNDEFINED_OFFSET,
@@ -116,6 +127,7 @@ class PluginSampleTransformer(
             isLateinit = isLateinit
         )
         initializer?.let { result.initializer = initializer }
+        +result
         return result
     }
 
@@ -140,13 +152,13 @@ class PluginSampleTransformer(
             val newCompareTo = declaration.overrideFunction(declaration.functions.first { it.overrides(compareTo) })
 
             newCompareTo.buildBlockBody(context) {
-                val variable = variable(
+                val variable = irVariable(
                     name = Name.identifier("result"),
                     initializer = irInt(0),
                     isVar = true
                 )
                 for (property in declaration.properties) {
-                    val prop = irGetProperty(irThis(newCompareTo), property)
+                    val prop = irGetProperty(irThis(), property)
                     val otherProp = irGetProperty(irFirst(newCompareTo), property)
 
                     val cmp = irCall(compareTo).apply {
