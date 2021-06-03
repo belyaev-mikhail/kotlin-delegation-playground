@@ -17,5 +17,5 @@
 package ru.spbstu
 
 open class KotlinSampleGradleExtension {
-  var functions: List<String> = listOf()
+  var annotationNames: List<String> = listOf("DataLike")
 }

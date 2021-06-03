@@ -26,11 +26,11 @@ import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.CompilerConfigurationKey
 import org.jetbrains.kotlin.name.FqName
 
-val KEY_FUNCTIONS = CompilerConfigurationKey<List<String>>("fully-qualified function names")
+val KEY_ANNOTATIONS = CompilerConfigurationKey<List<String>>("fully-qualified annotation names")
 
 @AutoService(ComponentRegistrar::class)
 class PluginSampleComponentRegistrar(
-  private val functions: Set<FqName>
+  private val annotationNames: Set<FqName>
 ) : ComponentRegistrar {
   @Suppress("unused") constructor() : this(emptySet()) // Used by service loader
 
@@ -38,7 +38,7 @@ class PluginSampleComponentRegistrar(
     project: MockProject,
     configuration: CompilerConfiguration
   ) {
-    val functions = configuration[KEY_FUNCTIONS]?.map { FqName(it) } ?: functions
+    val functions = configuration[KEY_ANNOTATIONS]?.map { FqName(it) } ?: annotationNames
     if (functions.isEmpty()) return
 
     val messageCollector = configuration.get(CLIConfigurationKeys.MESSAGE_COLLECTOR_KEY, MessageCollector.NONE)

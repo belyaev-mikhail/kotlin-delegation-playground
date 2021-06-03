@@ -19,8 +19,12 @@ package ru.spbstu
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.ScopeWithIr
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
+import org.jetbrains.kotlin.backend.common.ir.addSimpleDelegatingConstructor
 import org.jetbrains.kotlin.backend.common.ir.copyTo
+import org.jetbrains.kotlin.backend.common.ir.simpleFunctions
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
+import org.jetbrains.kotlin.backend.jvm.ir.isStaticInlineClassReplacement
+import org.jetbrains.kotlin.backend.wasm.ir2wasm.allFields
 import org.jetbrains.kotlin.backend.wasm.ir2wasm.allSuperInterfaces
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
@@ -44,14 +48,14 @@ import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 
-object SAMPLE_PLUGIN_GENERATED_ORIGIN: IrDeclarationOriginImpl("SAMPLE_PLUGIN_GENERATED_ORIGIN", true)
+object SAMPLE_PLUGIN_GENERATED_ORIGIN: IrDeclarationOriginImpl("SAMPLE_PLUGIN_GENERATED", true)
 
 class PluginSampleTransformer(
     private val file: IrFile,
     private val fileSource: String,
     private val context: IrPluginContext,
     private val messageCollector: MessageCollector,
-    private val functions: Set<FqName>
+    private val annotations: Set<FqName>
 ) : IrElementTransformerVoidWithContext() {
 
     private val irBuiltins = context.irBuiltIns
@@ -140,8 +144,8 @@ class PluginSampleTransformer(
 
     @OptIn(ObsoleteDescriptorBasedAPI::class)
     override fun visitClassNew(declaration: IrClass): IrStatement {
-        val annotation = declaration.getAnnotation(FqName("DataLike"))
-            ?: return super.visitClassNew(declaration)
+        val annotation = declaration.annotations.find { it.symbol.owner.parentAsClass.fqNameWhenAvailable in annotations }
+        annotation ?: return super.visitClassNew(declaration)
 
         val comparable = context.referenceClass(StandardNames.BUILT_INS_PACKAGE_FQ_NAME.child(Name.identifier("Comparable")))
         require(comparable != null)
@@ -172,9 +176,6 @@ class PluginSampleTransformer(
             }
         }
 
-        println(annotation.getArgumentsWithSymbols().map {
-            "${it.first} = ${it.second.dump()}"
-        })
         val dmg = MemberGenerator(context, declaration)
 
         val newEquals = declaration.overrideFunction(equals)
@@ -190,9 +191,6 @@ class PluginSampleTransformer(
             newHashCode,
             declaration.properties.toList()
         )
-
-        messageCollector.report(CompilerMessageSeverity.INFO,
-            declaration.declarations.joinToString("\n") { it.dump() })
 
         val newToString = declaration.overrideFunction(toString)
 
@@ -223,10 +221,13 @@ private fun IrClass.overrideFunction(original: IrSimpleFunction): IrSimpleFuncti
         this.isSuspend = false
         this.isFakeOverride = false
         this.origin = SAMPLE_PLUGIN_GENERATED_ORIGIN
+        this.isExternal = false
     }
 
     result.parent = this
-    result.dispatchReceiverParameter = thisReceiver?.copyTo(result, origin = SAMPLE_PLUGIN_GENERATED_ORIGIN)
+    result.dispatchReceiverParameter = thisReceiver?.copyTo(result,
+        type = this.defaultType,
+        origin = SAMPLE_PLUGIN_GENERATED_ORIGIN)
     result.valueParameters =
         existing.valueParameters.map { it.copyTo(result, origin = SAMPLE_PLUGIN_GENERATED_ORIGIN) }
 

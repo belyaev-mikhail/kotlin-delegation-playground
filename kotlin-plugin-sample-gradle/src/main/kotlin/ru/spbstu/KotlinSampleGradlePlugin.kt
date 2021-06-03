@@ -25,12 +25,12 @@ import org.jetbrains.kotlin.gradle.plugin.SubpluginOption
 
 class KotlinSampleGradlePlugin : KotlinCompilerPluginSupportPlugin {
   override fun apply(target: Project): Unit = with(target) {
-    extensions.create("kotlinPowerAssert", KotlinSampleGradleExtension::class.java)
+    extensions.create("kotlinSamplePlugin", KotlinSampleGradleExtension::class.java)
   }
 
   override fun isApplicable(kotlinCompilation: KotlinCompilation<*>): Boolean = true
 
-  override fun getCompilerPluginId(): String = "com.bnorm.kotlin-power-assert"
+  override fun getCompilerPluginId(): String = "ru.spbstu.kotlin-plugin-sample"
 
   override fun getPluginArtifact(): SubpluginArtifact = SubpluginArtifact(
     groupId = BuildConfig.PLUGIN_GROUP_ID,
@@ -50,8 +50,8 @@ class KotlinSampleGradlePlugin : KotlinCompilerPluginSupportPlugin {
     val project = kotlinCompilation.target.project
     val extension = project.extensions.getByType(KotlinSampleGradleExtension::class.java)
     return project.provider {
-      extension.functions.map {
-        SubpluginOption(key = "function", value = it)
+      extension.annotationNames.map {
+        SubpluginOption(key = "annotation", value = it)
       }
     }
   }

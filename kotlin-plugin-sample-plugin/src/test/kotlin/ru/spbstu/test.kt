@@ -29,16 +29,15 @@ class CompilerTest {
             2, executeSource(
                 """
         annotation class DataLike(val genEquals: Boolean = true)
-const val dddd = false
-      @DataLike(dddd)
-      class Data(val x: Int, val y: List<String>?): Comparable<Data> {
-        override fun compareTo(other: Data): Int = TODO()
-      }
-      fun main(): Int {
-        val data1 = Data(1, listOf())
-        println(data1)
-        return if (Data(2, listOf()) == Data(2, listOf())) 2 else 3
-      }
+        const val dddd = true
+        fun <T> generated(): T = TODO()
+        @DataLike(dddd)
+        class Data(val x: Int, val y: List<String>?): Comparable<Data> by generated() 
+        fun main(): Int {
+            val data1 = Data(1, listOf())
+            println(data1)
+            return if (Data(2, listOf()) == Data(2, listOf())) 2 else 3
+        }
     """
             )
         )

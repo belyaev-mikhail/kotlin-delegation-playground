@@ -10,7 +10,13 @@ repositories {
 kotlin {
   jvm()
   js(IR) {
-    browser()
+    browser {
+        testTask {
+            useKarma {
+                useFirefoxHeadless()
+            }
+        }
+    }
     nodejs()
   }
 
@@ -50,12 +56,7 @@ kotlin {
 }
 
 configure<ru.spbstu.KotlinSampleGradleExtension> {
-  functions = listOf(
-    "kotlin.assert",
-    "kotlin.test.assertTrue",
-    "kotlin.require",
-    "com.bnorm.power.AssertScope.assert",
-    "com.bnorm.power.assert",
-    "com.bnorm.power.dbg"
+  annotationNames = listOf(
+    "ru.spbstu.DataLike"
   )
 }

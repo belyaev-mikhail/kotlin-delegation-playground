@@ -27,13 +27,13 @@ import java.io.File
 
 class PluginSampleIrGenerationExtension(
   private val messageCollector: MessageCollector,
-  private val functions: Set<FqName>
+  private val annotationNames: Set<FqName>
 ) : IrGenerationExtension {
   override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
     for (file in moduleFragment.files) {
       val fileSource = File(file.path).readText()
         .replace("\r\n", "\n") // https://youtrack.jetbrains.com/issue/KT-41888
-      PluginSampleTransformer(file, fileSource, pluginContext, messageCollector, functions)
+      PluginSampleTransformer(file, fileSource, pluginContext, messageCollector, annotationNames)
         .visitFile(file)
     }
   }

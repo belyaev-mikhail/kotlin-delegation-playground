@@ -22,28 +22,30 @@ import org.jetbrains.kotlin.compiler.plugin.CliOption
 import org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor
 import org.jetbrains.kotlin.config.CompilerConfiguration
 
+const val ANNOTATION = "annotation"
+
 @AutoService(CommandLineProcessor::class)
 class PluginSampleCommandLineProcessor : CommandLineProcessor {
-  override val pluginId: String = "ru.spbstu.kotlin-plugin-sample"
+    override val pluginId: String = "ru.spbstu.kotlin-plugin-sample"
 
-  override val pluginOptions: Collection<CliOption> = listOf(
-    CliOption(
-      optionName = "function",
-      valueDescription = "function full-qualified name",
-      description = "fully qualified path of function to intercept",
-      required = false, // TODO required for Kotlin/JS
-      allowMultipleOccurrences = true
+    override val pluginOptions: Collection<CliOption> = listOf(
+        CliOption(
+            optionName = ANNOTATION,
+            valueDescription = "annotation full-qualified name",
+            description = "fully qualified path of annotation to intercept",
+            required = false, // TODO required for Kotlin/JS
+            allowMultipleOccurrences = true
+        )
     )
-  )
 
-  override fun processOption(
-    option: AbstractCliOption,
-    value: String,
-    configuration: CompilerConfiguration
-  ) {
-    return when (option.optionName) {
-      "function" -> configuration.add(KEY_FUNCTIONS, value)
-      else -> error("Unexpected config option ${option.optionName}")
+    override fun processOption(
+        option: AbstractCliOption,
+        value: String,
+        configuration: CompilerConfiguration
+    ) {
+        return when (option.optionName) {
+            ANNOTATION -> configuration.add(KEY_ANNOTATIONS, value)
+            else -> error("Unexpected config option ${option.optionName}")
+        }
     }
-  }
 }
