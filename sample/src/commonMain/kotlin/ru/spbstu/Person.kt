@@ -1,24 +1,39 @@
 package ru.spbstu
 
-fun <T> generated(): T = TODO()
+import kotlin.reflect.KCallable
+import kotlin.reflect.KFunction
+import kotlin.reflect.KProperty
+import kotlin.time.days
+
+inline fun <T> pluginGenerated(): T = TODO()
 
 sealed class Expr
 @DataLike
-class Var(val name: String): Expr(), Comparable<Var> {
-    override fun compareTo(other: Var): Int = generated()
-}
+class Var(val name: String): Expr(), Comparable<Var> by pluginGenerated()
 @DataLike
-class Val<T: Comparable<T>>(val value: T): Expr(), Comparable<Val<T>> {
-    override fun compareTo(other: Val<T>): Int = generated()
-}
+class Val<T: Comparable<T>>(val value: T): Expr(), Comparable<Val<T>> by pluginGenerated()
 @DataLike
-class Const(val value: Int): Expr(), Comparable<Const> {
-    override fun compareTo(other: Const): Int = generated()
-}
+class Const(val value: Int): Expr(), Comparable<Const> by pluginGenerated()
 @DataLike
-class Binary(val lhv: Expr, val rhv: Expr, val op: String): Expr(), Comparable<Binary> {
-    override fun compareTo(other: Binary): Int = generated()
-}
-@DataLike
-class Multiple(vararg val elements: Expr): Expr()
+class Binary(val lhv: Expr, val rhv: Expr, val op: String): Expr(), Comparable<Binary> by pluginGenerated()
 
+interface InterfaceProxy {
+    operator fun <T> getValue(self: Any?, prop: KProperty<*>): T
+    operator fun <T> setValue(self: Any?, prop: KProperty<*>, newValue: T)
+    fun <R> callMember(self: Any?, function: KFunction<R>, vararg arguments: Any?): R
+}
+
+@DataLike
+class Multiple(vararg val elements: Expr): Expr() {
+    inline fun <reified T> toStuff(body: (T) -> Unit) {
+
+        body(this as T)
+        println("Hello")
+    }
+
+    fun doStuff2() {
+        toStuff { s: Multiple ->
+            println(s.elements)
+        }
+    }
+}

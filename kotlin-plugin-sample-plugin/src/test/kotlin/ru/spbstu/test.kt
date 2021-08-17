@@ -32,7 +32,9 @@ class CompilerTest {
         const val dddd = true
         fun <T> generated(): T = TODO()
         @DataLike(dddd)
-        class Data(val x: Int, val y: List<String>?): Comparable<Data> by generated() 
+        class Data(val x: Int, val y: List<String>?): Comparable<Data> {
+            override fun compareTo(other: Data): Int = generated() 
+        }
         fun main(): Int {
             val data1 = Data(1, listOf())
             println(data1)

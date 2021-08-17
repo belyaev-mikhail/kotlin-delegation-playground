@@ -23,6 +23,7 @@ import org.jetbrains.kotlin.backend.common.ir.addSimpleDelegatingConstructor
 import org.jetbrains.kotlin.backend.common.ir.copyTo
 import org.jetbrains.kotlin.backend.common.ir.simpleFunctions
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
+import org.jetbrains.kotlin.backend.jvm.codegen.isInlineIrExpression
 import org.jetbrains.kotlin.backend.jvm.ir.isStaticInlineClassReplacement
 import org.jetbrains.kotlin.backend.wasm.ir2wasm.allFields
 import org.jetbrains.kotlin.backend.wasm.ir2wasm.allSuperInterfaces
@@ -41,8 +42,12 @@ import org.jetbrains.kotlin.ir.builders.declarations.addFunction
 import org.jetbrains.kotlin.ir.builders.declarations.buildVariable
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.declarations.impl.IrVariableImpl
+import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
+import org.jetbrains.kotlin.ir.expressions.IrMemberAccessExpression
 import org.jetbrains.kotlin.ir.expressions.impl.IrGetValueImpl
+import org.jetbrains.kotlin.ir.symbols.IrSymbol
 import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.FqName
@@ -151,6 +156,13 @@ class PluginSampleTransformer(
         require(comparable != null)
         val actualComparable = comparable.typeWith(declaration.defaultType)
 
+        val possibleDelegate = declaration.fields.find {
+            it.type.isSubtypeOfClass(comparable) && it.origin == IrDeclarationOrigin.DELEGATE
+        }
+
+        if (possibleDelegate != null)
+            declaration.declarations.remove(possibleDelegate)
+
         if (declaration.superTypes.any { it.isSubtypeOf(actualComparable, context.irBuiltIns) }) {
             val compareTo = comparable.owner.functions.single { it.name == Name.identifier("compareTo") }
             val newCompareTo = declaration.overrideFunction(declaration.functions.first { it.overrides(compareTo) })
@@ -196,6 +208,7 @@ class PluginSampleTransformer(
 
         dmg.generateToStringMethod(newToString, declaration.properties.toList())
 
+        messageCollector.report(CompilerMessageSeverity.WARNING, declaration.dumpKotlinLike())
         return super.visitClassNew(declaration)
     }
 
@@ -236,3 +249,6 @@ private fun IrClass.overrideFunction(original: IrSimpleFunction): IrSimpleFuncti
     declarations.remove(existing)
     return result
 }
+
+fun <S: IrSymbol> IrMemberAccessExpression<S>.valueArgumentIterator() =
+    (0 until valueArgumentsCount).map { getValueArgument(it) }
