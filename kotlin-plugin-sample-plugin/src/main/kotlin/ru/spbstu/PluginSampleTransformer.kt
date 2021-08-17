@@ -23,6 +23,7 @@ import org.jetbrains.kotlin.backend.common.ir.addSimpleDelegatingConstructor
 import org.jetbrains.kotlin.backend.common.ir.copyTo
 import org.jetbrains.kotlin.backend.common.ir.simpleFunctions
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
+import org.jetbrains.kotlin.backend.common.serialization.knownBuiltins
 import org.jetbrains.kotlin.backend.jvm.codegen.isInlineIrExpression
 import org.jetbrains.kotlin.backend.jvm.ir.isStaticInlineClassReplacement
 import org.jetbrains.kotlin.backend.wasm.ir2wasm.allFields
@@ -152,12 +153,12 @@ class PluginSampleTransformer(
         val annotation = declaration.annotations.find { it.symbol.owner.parentAsClass.fqNameWhenAvailable in annotations }
         annotation ?: return super.visitClassNew(declaration)
 
-        val comparable = context.referenceClass(StandardNames.BUILT_INS_PACKAGE_FQ_NAME.child(Name.identifier("Comparable")))
-        require(comparable != null)
+        val comparable = context.referenceClass(StandardNames.FqNames.comparable)
+        check(comparable != null)
         val actualComparable = comparable.typeWith(declaration.defaultType)
 
         val possibleDelegate = declaration.fields.find {
-            it.type.isSubtypeOfClass(comparable) && it.origin == IrDeclarationOrigin.DELEGATE
+            it.type.isSubtypeOf(actualComparable, context.irBuiltIns) && it.origin == IrDeclarationOrigin.DELEGATE
         }
 
         if (possibleDelegate != null)

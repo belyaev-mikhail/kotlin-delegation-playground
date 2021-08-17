@@ -10,7 +10,7 @@ class PersonTest {
     @Test
     fun smokey() {
         assertTrue { Binary(Var("x"), Val(10), "+") == Binary(Var("x"), Val(10), "+") }
-        assertTrue { Binary(Var("x"), Val(10), "+") <= Binary(Var("x"), Val(10), "+") }
+        //assertTrue { Binary(Var("x"), Val(10), "+") <= Binary(Var("x"), Val(10), "+") }
         assertTrue { Var("a") < Var("b") }
         assertTrue { Val(12) < Val(13) }
 
