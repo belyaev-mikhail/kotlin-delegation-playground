@@ -17,44 +17,32 @@
 package ru.spbstu
 
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
-import org.jetbrains.kotlin.backend.common.ScopeWithIr
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
-import org.jetbrains.kotlin.backend.common.ir.addSimpleDelegatingConstructor
 import org.jetbrains.kotlin.backend.common.ir.copyTo
-import org.jetbrains.kotlin.backend.common.ir.simpleFunctions
-import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
-import org.jetbrains.kotlin.backend.common.serialization.knownBuiltins
-import org.jetbrains.kotlin.backend.jvm.codegen.isInlineIrExpression
-import org.jetbrains.kotlin.backend.jvm.ir.isStaticInlineClassReplacement
-import org.jetbrains.kotlin.backend.wasm.ir2wasm.allFields
-import org.jetbrains.kotlin.backend.wasm.ir2wasm.allSuperInterfaces
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.descriptors.*
-import org.jetbrains.kotlin.fir.resolve.dfa.stackOf
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
-import org.jetbrains.kotlin.ir.backend.js.utils.getSingleConstStringArgument
 import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.builders.declarations.addFunction
 import org.jetbrains.kotlin.ir.builders.declarations.buildVariable
 import org.jetbrains.kotlin.ir.declarations.*
-import org.jetbrains.kotlin.ir.declarations.impl.IrVariableImpl
-import org.jetbrains.kotlin.ir.expressions.IrCall
-import org.jetbrains.kotlin.ir.expressions.IrExpression
-import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
-import org.jetbrains.kotlin.ir.expressions.IrMemberAccessExpression
+import org.jetbrains.kotlin.ir.expressions.*
+import org.jetbrains.kotlin.ir.expressions.impl.IrClassReferenceImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrGetValueImpl
+import org.jetbrains.kotlin.ir.symbols.IrFunctionSymbol
 import org.jetbrains.kotlin.ir.symbols.IrSymbol
 import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
+import kotlin.reflect.KClass
 
-object SAMPLE_PLUGIN_GENERATED_ORIGIN: IrDeclarationOriginImpl("SAMPLE_PLUGIN_GENERATED", true)
+object SAMPLE_PLUGIN_GENERATED_ORIGIN : IrDeclarationOriginImpl("SAMPLE_PLUGIN_GENERATED", true)
 
 class PluginSampleTransformer(
     private val file: IrFile,
@@ -70,6 +58,9 @@ class PluginSampleTransformer(
     private val hashCode = any.functions.single { it.name == Name.identifier("hashCode") }
     private val toString = any.functions.single { it.name == Name.identifier("toString") }
 
+    private val kclass = irBuiltins.kClassClass
+    private val kClassQualifiedName = kclass.getPropertyGetter("qualifiedName")!!
+
     fun IrBuilderWithScope.irGetProperty(receiver: IrExpression, property: IrProperty): IrExpression {
         // In some JVM-specific cases, such as when 'allopen' compiler plugin is applied,
         // data classes and corresponding properties can be non-final.
@@ -84,8 +75,30 @@ class PluginSampleTransformer(
         }
     }
 
+    fun IrBuilderWithScope.irMemberCall(
+        function: IrFunction,
+        receiver: IrExpression,
+        vararg arguments: IrExpression
+    ): IrFunctionAccessExpression = irCall(function).apply {
+        dispatchReceiver = receiver
+        for (i in 0..arguments.lastIndex) {
+            putValueArgument(i, arguments[i])
+        }
+    }
+
+    fun IrBuilderWithScope.irMemberCall(
+        function: IrFunctionSymbol,
+        receiver: IrExpression,
+        vararg arguments: IrExpression
+    ): IrFunctionAccessExpression = irCall(function).apply {
+        dispatchReceiver = receiver
+        for (i in 0..arguments.lastIndex) {
+            putValueArgument(i, arguments[i])
+        }
+    }
+
     fun IrDeclarationParent.containingFunction(): IrFunction {
-        return when(val parent = this) {
+        return when (val parent = this) {
             is IrFunction -> parent
             !is IrDeclaration -> throw IllegalStateException()
             else -> parent.parent.containingFunction()
@@ -112,7 +125,15 @@ class PluginSampleTransformer(
         )
     }
 
-    fun <T: IrElement> IrStatementsBuilder<T>.irVariable(
+    fun IrBuilderWithScope.irKClassReference(classType: IrType): IrClassReference =
+        IrClassReferenceImpl(
+            startOffset, endOffset,
+            irBuiltins.kClassClass.typeWith(classType),
+            classType.classOrNull!!,
+            classType
+        )
+
+    fun <T : IrElement> IrStatementsBuilder<T>.irVariable(
         parent: IrDeclarationParent? = this.parent,
         startOffset: Int = UNDEFINED_OFFSET,
         endOffset: Int = UNDEFINED_OFFSET,
@@ -141,30 +162,39 @@ class PluginSampleTransformer(
         return result
     }
 
-    fun IrFunction.buildBlockBody(context: IrGeneratorContext,
-                                  startOffset: Int = UNDEFINED_OFFSET,
-                                  endOffset: Int = UNDEFINED_OFFSET,
-                                  building: IrBlockBodyBuilder.() -> Unit) {
+    fun IrFunction.buildBlockBody(
+        context: IrGeneratorContext,
+        startOffset: Int = UNDEFINED_OFFSET,
+        endOffset: Int = UNDEFINED_OFFSET,
+        building: IrBlockBodyBuilder.() -> Unit
+    ) {
         this.body = IrBlockBodyBuilder(context, Scope(this.symbol), startOffset, endOffset).blockBody(building)
     }
 
     @OptIn(ObsoleteDescriptorBasedAPI::class)
     override fun visitClassNew(declaration: IrClass): IrStatement {
-        val annotation = declaration.annotations.find { it.symbol.owner.parentAsClass.fqNameWhenAvailable in annotations }
+        val annotation =
+            declaration.annotations.find { it.symbol.owner.parentAsClass.fqNameWhenAvailable in annotations }
         annotation ?: return super.visitClassNew(declaration)
 
         val comparable = context.referenceClass(StandardNames.FqNames.comparable)
         check(comparable != null)
-        val actualComparable = comparable.typeWith(declaration.defaultType)
+        //val actualComparable = comparable.typeWith(declaration.defaultType)
 
         val possibleDelegate = declaration.fields.find {
-            it.type.isSubtypeOf(actualComparable, context.irBuiltIns) && it.origin == IrDeclarationOrigin.DELEGATE
+            it.type.isSubtypeOfClass(comparable) && it.origin == IrDeclarationOrigin.DELEGATE
         }
 
         if (possibleDelegate != null)
             declaration.declarations.remove(possibleDelegate)
 
-        if (declaration.superTypes.any { it.isSubtypeOf(actualComparable, context.irBuiltIns) }) {
+        val possibleComparableSuperType: IrType? =
+            if (declaration.isSubclassOf(comparable.owner))
+                getAllSubstitutedSupertypes(declaration).find { it.classifier == comparable }
+            else null
+        if (possibleComparableSuperType is IrSimpleType) {
+            val typeToCompareWith = possibleComparableSuperType.arguments.single().typeOrNull!!
+
             val compareTo = comparable.owner.functions.single { it.name == Name.identifier("compareTo") }
             val newCompareTo = declaration.overrideFunction(declaration.functions.first { it.overrides(compareTo) })
 
@@ -174,9 +204,30 @@ class PluginSampleTransformer(
                     initializer = irInt(0),
                     isVar = true
                 )
+                if (declaration.symbol != typeToCompareWith.classOrNull) {
+                    +irIfThen(
+                        irBuiltins.unitType,
+                        irNotIs(irFirst(), declaration.defaultType),
+                        irReturn(
+                            irMemberCall(
+                                compareTo,
+                                irMemberCall(
+                                    kClassQualifiedName,
+                                    irKClassReference(declaration.defaultType)
+                                ),
+                                irMemberCall(
+                                    kClassQualifiedName,
+                                    irKClassReference(typeToCompareWith)
+                                )
+                            )
+                        )
+                    )
+                }
+                val arg = irTemporary(irAs(irFirst(newCompareTo), irThis().type))
+
                 for (property in declaration.properties) {
                     val prop = irGetProperty(irThis(), property)
-                    val otherProp = irGetProperty(irFirst(newCompareTo), property)
+                    val otherProp = irGetProperty(irGet(arg), property)
 
                     val cmp = irCall(compareTo).apply {
                         dispatchReceiver = prop
@@ -218,9 +269,9 @@ class PluginSampleTransformer(
 private fun IrClass.overrideFunction(original: IrSimpleFunction): IrSimpleFunction {
     val existingIndex = declarations.indexOfFirst {
         it is IrFunction &&
-        it.name == original.name &&
-        (it.dispatchReceiverParameter == null) == (original.dispatchReceiverParameter == null) &&
-        it.valueParameters.map { it.type } == original.valueParameters.map { it.type }
+            it.name == original.name &&
+            (it.dispatchReceiverParameter == null) == (original.dispatchReceiverParameter == null) &&
+            it.valueParameters.map { it.type } == original.valueParameters.map { it.type }
     }
     require(existingIndex != -1)
     val existing = declarations[existingIndex]
@@ -239,9 +290,11 @@ private fun IrClass.overrideFunction(original: IrSimpleFunction): IrSimpleFuncti
     }
 
     result.parent = this
-    result.dispatchReceiverParameter = thisReceiver?.copyTo(result,
+    result.dispatchReceiverParameter = thisReceiver?.copyTo(
+        result,
         type = this.defaultType,
-        origin = SAMPLE_PLUGIN_GENERATED_ORIGIN)
+        origin = SAMPLE_PLUGIN_GENERATED_ORIGIN
+    )
     result.valueParameters =
         existing.valueParameters.map { it.copyTo(result, origin = SAMPLE_PLUGIN_GENERATED_ORIGIN) }
 
@@ -251,5 +304,5 @@ private fun IrClass.overrideFunction(original: IrSimpleFunction): IrSimpleFuncti
     return result
 }
 
-fun <S: IrSymbol> IrMemberAccessExpression<S>.valueArgumentIterator() =
+fun <S : IrSymbol> IrMemberAccessExpression<S>.valueArgumentIterator() =
     (0 until valueArgumentsCount).map { getValueArgument(it) }

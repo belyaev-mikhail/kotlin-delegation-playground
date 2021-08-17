@@ -7,15 +7,15 @@ import kotlin.time.days
 
 inline fun <T> pluginGenerated(): T = TODO()
 
-sealed class Expr
+sealed class Expr: Comparable<Expr>
 @DataLike
-class Var(val name: String): Expr(), Comparable<Var> by pluginGenerated()
+class Var(val name: String): Expr(), Comparable<Expr> by pluginGenerated()
 @DataLike
-class Val<T: Comparable<T>>(val value: T): Expr(), Comparable<Val<T>> by pluginGenerated()
+class Val<T: Comparable<T>>(val value: T): Expr(), Comparable<Expr> by pluginGenerated()
 @DataLike
-class Const(val value: Int): Expr(), Comparable<Const> by pluginGenerated()
+class Const(val value: Int): Expr(), Comparable<Expr> by pluginGenerated()
 @DataLike
-class Binary(val lhv: Expr, val rhv: Expr, val op: String): Expr(), Comparable<Binary> by pluginGenerated()
+class Binary(val lhv: Expr, val rhv: Expr, val op: String): Expr(), Comparable<Expr> by pluginGenerated()
 
 interface InterfaceProxy {
     operator fun <T> getValue(self: Any?, prop: KProperty<*>): T
@@ -24,7 +24,7 @@ interface InterfaceProxy {
 }
 
 @DataLike
-class Multiple(vararg val elements: Expr): Expr() {
+class Multiple(vararg val elements: Expr): Expr(), Comparable<Expr> by pluginGenerated() {
     inline fun <reified T> toStuff(body: (T) -> Unit) {
 
         body(this as T)
@@ -37,3 +37,10 @@ class Multiple(vararg val elements: Expr): Expr() {
         }
     }
 }
+
+@DataLike
+class Standalone(
+    val firstName: String = "",
+    val lastName: String = "",
+    val number: Int
+): Comparable<Standalone> by pluginGenerated()
