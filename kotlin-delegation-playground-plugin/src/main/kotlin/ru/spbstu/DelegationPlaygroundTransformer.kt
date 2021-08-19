@@ -17,8 +17,12 @@
 package ru.spbstu
 
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
+import org.jetbrains.kotlin.backend.common.deepCopyWithVariables
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
+import org.jetbrains.kotlin.backend.common.ir.allOverridden
 import org.jetbrains.kotlin.backend.common.ir.copyTo
+import org.jetbrains.kotlin.backend.common.ir.setDeclarationsParent
+import org.jetbrains.kotlin.backend.wasm.ir2wasm.allSuperInterfaces
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
@@ -27,14 +31,23 @@ import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.fir.analysis.cfa.FirReturnsImpliesAnalyzer.isSupertypeOf
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI
+import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.builders.*
+import org.jetbrains.kotlin.ir.builders.declarations.addField
 import org.jetbrains.kotlin.ir.builders.declarations.addFunction
 import org.jetbrains.kotlin.ir.builders.declarations.addGetter
 import org.jetbrains.kotlin.ir.builders.declarations.addProperty
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.IrCall
+import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrFieldAccessExpression
+import org.jetbrains.kotlin.ir.expressions.impl.IrCallImpl
+import org.jetbrains.kotlin.ir.expressions.impl.IrExpressionBodyImpl
+import org.jetbrains.kotlin.ir.symbols.IrFunctionSymbol
 import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.*
+import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
+import org.jetbrains.kotlin.ir.visitors.acceptVoid
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import java.lang.IllegalArgumentException
@@ -70,6 +83,10 @@ class DelegationPlaygroundTransformer(
         context.irBuiltIns.stringType,
         context.irBuiltIns.anyNType
     )!!
+
+    private val lazyClass = context.referenceClass(FqName("kotlin.Lazy"))?.owner!!
+    private val lazyFunction = context.referenceFunctions(FqName("kotlin.lazy")).first()
+    private val lazyPropValue = lazyClass.properties.find { it.name == Name.identifier("value") }!!
 
     private val kclass = irBuiltins.kClassClass
     private val kClassQualifiedName = kclass.getPropertyGetter("qualifiedName")!!
@@ -215,6 +232,45 @@ class DelegationPlaygroundTransformer(
         }
     }
 
+    private fun visitClassNewLazyDelegate(declaration: IrClass, delegate: IrField) {
+        val ifaceType = delegate.type
+
+        val initCall = delegate.delegateInitializerCall!!
+        val newField = declaration.addField {
+            updateFrom(delegate)
+            name = delegate.name
+            type = lazyClass.typeWith(delegate.type)
+        }.apply {
+            val newField = this
+            val arg = initCall.getValueArgument(0)!!
+            when {
+                arg.type == type -> initializer = IrExpressionBodyImpl(arg.deepCopyWithVariables().patchDeclarationParents(newField))
+                arg.type.isFunctionTypeOrSubtype() -> {
+                    initializer = IrExpressionBodyImpl(IrCallImpl.fromSymbolOwner(
+                        UNDEFINED_OFFSET, UNDEFINED_OFFSET,
+                        type,
+                        lazyFunction
+                    ).apply {
+                        putValueArgument(0, arg.deepCopyWithVariables().patchDeclarationParents(newField))
+                        putTypeArgument(0, ifaceType)
+                    })
+                }
+            }
+        }
+        val remapper: IrElementTransformerVoidWithContext = object: IrElementTransformerVoidWithContext() {
+            override fun visitFieldAccess(expression: IrFieldAccessExpression): IrExpression {
+                if (expression.symbol == delegate.symbol) {
+                    return currentScope!!.buildSomeStatements(context) {
+                        irMemberCall(lazyPropValue.getter!!, irGetField(irThis(), newField), type = delegate.type)
+                    }
+                }
+                return super.visitFieldAccess(expression)
+            }
+        }
+
+        declaration.transformChildren(remapper, null)
+    }
+
     @OptIn(ObsoleteDescriptorBasedAPI::class)
     override fun visitClassNew(declaration: IrClass): IrStatement {
         val possibleDelegates = declaration.fields.filter {
@@ -231,20 +287,27 @@ class DelegationPlaygroundTransformer(
                     visitClassNewProxyDelegate(declaration, delegate.type)
                     declaration.declarations.remove(delegate)
                 }
+                if (delegate.delegateInitializerCall!!.symbol in lazyDelegateFunctions) {
+                    visitClassNewLazyDelegate(declaration, delegate)
+                    declaration.declarations.remove(delegate)
+                }
             } catch (ex: IllegalArgumentException) {
                 messageCollector.report(
                     CompilerMessageSeverity.ERROR,
                     ex.message ?: "Unknown error"
                 )
+                throw ex
             } catch (ex: IllegalStateException) {
                 messageCollector.report(
                     CompilerMessageSeverity.ERROR,
                     ex.message ?: "Unknown error"
                 )
+                throw ex
             }
 
         return super.visitClassNew(declaration)
     }
+
 
 }
 

@@ -3,10 +3,10 @@ package ru.spbstu
 inline fun <reified T> pluginGenerated(): T =
     throw IllegalStateException("pluginGenerated() should never be called, please configure your plugin correctly")
 
-inline fun <reified T> lazyDelegate(lazy: Lazy<T>): T =
+inline fun <reified T, U: T> lazyDelegate(lazy: Lazy<U>): T =
     throw IllegalStateException("lazyDelegate() should never be called, please configure your plugin correctly")
 
-inline fun <reified T> lazyDelegate(noinline body: () -> T): T =
+inline fun <reified T, U: T> lazyDelegate(noinline body: () -> U): T =
     throw IllegalStateException("lazyDelegate() should never be called, please configure your plugin correctly")
 
 inline fun <reified T> proxyDelegate(): T =

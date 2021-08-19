@@ -1,5 +1,7 @@
 package ru.spbstu
 
+import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
+import org.jetbrains.kotlin.backend.common.ScopeWithIr
 import org.jetbrains.kotlin.backend.jvm.ir.needsAccessor
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.descriptors.Modality
@@ -130,6 +132,13 @@ fun IrFunction.buildBlockBody(
 ) {
     this.body = IrBlockBodyBuilder(context, Scope(this.symbol), startOffset, endOffset).blockBody(building)
 }
+
+fun <T: IrElement> ScopeWithIr.buildSomeStatements(
+    context: IrGeneratorContext,
+    startOffset: Int = irElement.startOffset,
+    endOffset: Int = irElement.endOffset,
+    building: IrSingleStatementBuilder.() -> T
+): T = IrSingleStatementBuilder(context, scope, startOffset, endOffset).build(building)
 
 class IrIfBuilder(
     private val builder: IrBuilderWithScope,
