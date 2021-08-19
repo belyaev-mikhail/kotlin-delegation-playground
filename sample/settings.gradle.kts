@@ -1,3 +1,12 @@
 rootProject.name = "kotlin-plugin-sample-sample"
 
-includeBuild("..")
+pluginManagement {
+    includeBuild("..")
+}
+
+includeBuild("..") {
+    dependencySubstitution {
+        substitute(module("ru.spbstu:kotlin-delegation-playground-library"))
+            .using(project(":kotlin-delegation-playground-library"))
+    }
+}

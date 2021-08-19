@@ -10,7 +10,7 @@ plugins {
 }
 
 dependencies {
-  compileOnly("org.jetbrains.kotlin:kotlin-compiler")
+  compileOnly("org.jetbrains.kotlin:kotlin-compiler:1.5.10")
 
   kapt("com.google.auto.service:auto-service:1.0-rc6")
   compileOnly("com.google.auto.service:auto-service-annotations:1.0-rc6")
@@ -18,7 +18,7 @@ dependencies {
 
 tasks.named("compileKotlin") { dependsOn("syncSource") }
 tasks.register<Sync>("syncSource") {
-  from(project(":kotlin-plugin-sample-plugin").sourceSets.main.get().allSource)
+  from(project(":kotlin-delegation-playground-plugin").sourceSets.main.get().allSource)
   into("src/main/kotlin")
   filter {
     // Replace shadowed imports from kotlin-power-assert-plugin

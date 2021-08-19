@@ -22,15 +22,13 @@ import org.jetbrains.kotlin.compiler.plugin.CliOption
 import org.jetbrains.kotlin.compiler.plugin.CommandLineProcessor
 import org.jetbrains.kotlin.config.CompilerConfiguration
 
-const val ANNOTATION = "annotation"
-
 @AutoService(CommandLineProcessor::class)
-class PluginSampleCommandLineProcessor : CommandLineProcessor {
+class DelegationPlaygroundCommandLineProcessor : CommandLineProcessor {
     override val pluginId: String = "ru.spbstu.kotlin-plugin-sample"
 
     override val pluginOptions: Collection<CliOption> = listOf(
         CliOption(
-            optionName = ANNOTATION,
+            optionName = "annotation",
             valueDescription = "annotation full-qualified name",
             description = "fully qualified path of annotation to intercept",
             required = false, // TODO required for Kotlin/JS
@@ -44,7 +42,7 @@ class PluginSampleCommandLineProcessor : CommandLineProcessor {
         configuration: CompilerConfiguration
     ) {
         return when (option.optionName) {
-            ANNOTATION -> configuration.add(KEY_ANNOTATIONS, value)
+            "annotation" -> configuration.add(KEY_ANNOTATIONS, value)
             else -> error("Unexpected config option ${option.optionName}")
         }
     }

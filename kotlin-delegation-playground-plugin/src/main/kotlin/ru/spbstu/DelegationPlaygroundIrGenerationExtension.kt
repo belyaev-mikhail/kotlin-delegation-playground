@@ -16,7 +16,6 @@
 
 package ru.spbstu
 
-import org.jetbrains.kotlin.backend.common.BackendContext
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
@@ -25,7 +24,7 @@ import org.jetbrains.kotlin.ir.declarations.path
 import org.jetbrains.kotlin.name.FqName
 import java.io.File
 
-class PluginSampleIrGenerationExtension(
+class DelegationPlaygroundIrGenerationExtension(
   private val messageCollector: MessageCollector,
   private val annotationNames: Set<FqName>
 ) : IrGenerationExtension {
@@ -33,7 +32,7 @@ class PluginSampleIrGenerationExtension(
     for (file in moduleFragment.files) {
       val fileSource = File(file.path).readText()
         .replace("\r\n", "\n") // https://youtrack.jetbrains.com/issue/KT-41888
-      PluginSampleTransformer(file, fileSource, pluginContext, messageCollector, annotationNames)
+      DelegationPlaygroundTransformer(file, fileSource, pluginContext, messageCollector, annotationNames)
         .visitFile(file)
     }
   }

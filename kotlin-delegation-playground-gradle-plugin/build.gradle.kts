@@ -13,7 +13,7 @@ dependencies {
 }
 
 buildConfig {
-  val project = project(":kotlin-plugin-sample-plugin")
+  val project = project(":kotlin-delegation-playground-plugin")
   packageName(project.group.toString())
   buildConfigField("String", "PLUGIN_GROUP_ID", "\"${project.group}\"")
   buildConfigField("String", "PLUGIN_ARTIFACT_ID", "\"${project.name}\"")
@@ -28,11 +28,11 @@ pluginBundle {
 
 gradlePlugin {
   plugins {
-    create("kotlinSamplePlugin") {
-      id = "ru.spbstu.kotlin-plugin-sample"
+    create("kotlinDelegationPlayground") {
+      id = "ru.spbstu.kotlin-delegation-playground"
       displayName = "Kotlin Sample Plugin"
       description = "Kotlin Compiler Plugin example"
-      implementationClass = "ru.spbstu.KotlinSampleGradlePlugin"
+      implementationClass = "ru.spbstu.KotlinDelegationPlaygroundGradlePlugin"
     }
   }
 }

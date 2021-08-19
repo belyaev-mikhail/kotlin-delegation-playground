@@ -24,7 +24,7 @@ import org.jetbrains.kotlin.name.FqName
 import kotlin.test.assertEquals
 
 private val DEFAULT_COMPONENT_REGISTRARS = arrayOf(
-  PluginSampleComponentRegistrar(setOf(FqName("DataLike")))
+  DelegationPlaygroundComponentRegistrar(setOf(FqName("DataLike")))
 )
 
 fun compile(

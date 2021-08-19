@@ -4,43 +4,38 @@ import kotlin.reflect.KCallable
 import kotlin.reflect.KFunction
 import kotlin.reflect.KProperty
 import kotlin.time.days
+import kotlin.collections.mutableMapOf
 
-inline fun <T> pluginGenerated(): T = TODO()
+interface Runnable {
+    fun count(): Int
+    fun assign(name: String, value: Double = 3.14): Int
 
-sealed class Expr: Comparable<Expr>
-@DataLike
-class Var(val name: String): Expr(), Comparable<Expr> by pluginGenerated()
-@DataLike
-class Val<T: Comparable<T>>(val value: T): Expr(), Comparable<Expr> by pluginGenerated()
-@DataLike
-class Const(val value: Int): Expr(), Comparable<Expr> by pluginGenerated()
-@DataLike
-class Binary(val lhv: Expr, val rhv: Expr, val op: String): Expr(), Comparable<Expr> by pluginGenerated()
-
-interface InterfaceProxy {
-    operator fun <T> getValue(self: Any?, prop: KProperty<*>): T
-    operator fun <T> setValue(self: Any?, prop: KProperty<*>, newValue: T)
-    fun <R> callMember(self: Any?, function: KFunction<R>, vararg arguments: Any?): R
+    val size: Long
 }
 
-@DataLike
-class Multiple(vararg val elements: Expr): Expr(), Comparable<Expr> by pluginGenerated() {
-    inline fun <reified T> toStuff(body: (T) -> Unit) {
-
-        body(this as T)
-        println("Hello")
+class Foo: Runnable by proxyDelegate() {
+    operator fun <T> getValue(thisRef: Any?, property: KProperty<*>): T {
+        return when(property.name) {
+            "size" -> 108.toLong()
+            else -> error("Unknown property $property")
+        } as T
     }
 
-    fun doStuff2() {
-        toStuff { s: Multiple ->
-            println(s.elements)
-        }
+//    operator fun <T> setValue(thisRef: Any?, property: KProperty<*>, value: T) {
+//        TODO("Not yet implemented")
+//    }
+
+    inline fun <reified T> callMember(thisRef: Any?, member: KCallable<T>, arguments: Map<String, Any?>): T {
+        return when(member.name) {
+            "count" -> 43
+            "assign" -> {
+                val name by arguments
+                val value by arguments
+                name.toString().toIntOrNull() ?: (value as Double).toInt()
+            }
+            else -> error("Don't know how to handle function $member")
+        } as T
     }
+
 }
 
-@DataLike
-class Standalone(
-    val firstName: String = "",
-    val lastName: String = "",
-    val number: Int
-): Comparable<Standalone> by pluginGenerated()

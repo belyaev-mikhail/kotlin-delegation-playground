@@ -23,9 +23,9 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinCompilerPluginSupportPlugin
 import org.jetbrains.kotlin.gradle.plugin.SubpluginArtifact
 import org.jetbrains.kotlin.gradle.plugin.SubpluginOption
 
-class KotlinSampleGradlePlugin : KotlinCompilerPluginSupportPlugin {
+class KotlinDelegationPlaygroundGradlePlugin : KotlinCompilerPluginSupportPlugin {
   override fun apply(target: Project): Unit = with(target) {
-    extensions.create("kotlinSamplePlugin", KotlinSampleGradleExtension::class.java)
+    extensions.create("kotlinDelegationPlaygroundPlugin", KotlinDelegationPlaygroundGradleExtension::class.java)
   }
 
   override fun isApplicable(kotlinCompilation: KotlinCompilation<*>): Boolean = true
@@ -48,7 +48,7 @@ class KotlinSampleGradlePlugin : KotlinCompilerPluginSupportPlugin {
     kotlinCompilation: KotlinCompilation<*>
   ): Provider<List<SubpluginOption>> {
     val project = kotlinCompilation.target.project
-    val extension = project.extensions.getByType(KotlinSampleGradleExtension::class.java)
+    val extension = project.extensions.getByType(KotlinDelegationPlaygroundGradleExtension::class.java)
     return project.provider {
       extension.annotationNames.map {
         SubpluginOption(key = "annotation", value = it)

@@ -29,7 +29,7 @@ import org.jetbrains.kotlin.name.FqName
 val KEY_ANNOTATIONS = CompilerConfigurationKey<List<String>>("fully-qualified annotation names")
 
 @AutoService(ComponentRegistrar::class)
-class PluginSampleComponentRegistrar(
+class DelegationPlaygroundComponentRegistrar(
   private val annotationNames: Set<FqName>
 ) : ComponentRegistrar {
   @Suppress("unused") constructor() : this(emptySet()) // Used by service loader
@@ -42,7 +42,7 @@ class PluginSampleComponentRegistrar(
     if (functions.isEmpty()) return
 
     val messageCollector = configuration.get(CLIConfigurationKeys.MESSAGE_COLLECTOR_KEY, MessageCollector.NONE)
-    IrGenerationExtension.registerExtension(project, PluginSampleIrGenerationExtension(messageCollector, functions.toSet()))
+    IrGenerationExtension.registerExtension(project, DelegationPlaygroundIrGenerationExtension(messageCollector, functions.toSet()))
   }
 }
 

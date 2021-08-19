@@ -1,62 +1,65 @@
 plugins {
-  kotlin("multiplatform") version "1.5.0"
-  id("ru.spbstu.kotlin-plugin-sample") version "0.0.1"
+    kotlin("multiplatform") version "1.5.10"
+    id("ru.spbstu.kotlin-delegation-playground") version "0.0.2"
 }
 
 repositories {
-  mavenCentral()
+    mavenCentral()
 }
 
 kotlin {
-  jvm()
-  js(IR) {
-    browser {
-        testTask {
-            useKarma {
-                useFirefoxHeadless()
+    jvm()
+    js(IR) {
+        browser {
+            testTask {
+                useKarma {
+                    useFirefoxHeadless()
+                }
             }
         }
+        nodejs()
     }
-    nodejs()
-  }
 
-  val osName = System.getProperty("os.name")
-  when {
-    "Windows" in osName -> mingwX64("native")
-    "Mac OS" in osName -> macosX64("native")
-    else -> linuxX64("native")
-  }
+    val osName = System.getProperty("os.name")
+    when {
+        "Windows" in osName -> mingwX64("native")
+        "Mac OS" in osName -> macosX64("native")
+        else -> linuxX64("native")
+    }
 
-  sourceSets {
-    val commonMain by getting {
+    sourceSets {
+        val commonMain by getting {
+            dependencies {
+                implementation("ru.spbstu:kotlin-delegation-playground-library")
+            }
+        }
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test-common"))
+                implementation(kotlin("test-annotations-common"))
+            }
+        }
+        val jvmTest by getting {
+            dependencies {
+                implementation(kotlin("test-junit"))
+            }
+        }
+        val jsTest by getting {
+            dependencies {
+                implementation(kotlin("test-js"))
+            }
+        }
+        val nativeMain by getting {
+            dependsOn(commonMain)
+        }
+        val nativeTest by getting {
+            dependsOn(commonTest)
+        }
     }
-    val commonTest by getting {
-      dependencies {
-        implementation(kotlin("test-common"))
-        implementation(kotlin("test-annotations-common"))
-      }
-    }
-    val jvmTest by getting {
-      dependencies {
-        implementation(kotlin("test-junit"))
-      }
-    }
-    val jsTest by getting {
-      dependencies {
-        implementation(kotlin("test-js"))
-      }
-    }
-    val nativeMain by getting {
-      dependsOn(commonMain)
-    }
-    val nativeTest by getting {
-      dependsOn(commonTest)
-    }
-  }
 }
 
-configure<ru.spbstu.KotlinSampleGradleExtension> {
-  annotationNames = listOf(
-    "ru.spbstu.DataLike"
-  )
+configure<ru.spbstu.KotlinDelegationPlaygroundGradleExtension> {
+    annotationNames = listOf(
+        "ru.spbstu.DataLike"
+    )
 }
