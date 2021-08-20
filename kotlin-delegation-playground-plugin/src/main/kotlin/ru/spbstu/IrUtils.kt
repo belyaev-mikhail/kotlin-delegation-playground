@@ -5,6 +5,7 @@ import org.jetbrains.kotlin.backend.common.ScopeWithIr
 import org.jetbrains.kotlin.backend.jvm.ir.needsAccessor
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.descriptors.Modality
+import org.jetbrains.kotlin.fir.backend.Fir2IrConverter
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.builders.*
@@ -15,11 +16,18 @@ import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.expressions.impl.*
 import org.jetbrains.kotlin.ir.symbols.IrFunctionSymbol
-import org.jetbrains.kotlin.ir.types.IrType
-import org.jetbrains.kotlin.ir.types.classOrNull
-import org.jetbrains.kotlin.ir.types.typeWith
+import org.jetbrains.kotlin.ir.symbols.IrSymbol
+import org.jetbrains.kotlin.ir.types.*
+import org.jetbrains.kotlin.ir.util.render
+import org.jetbrains.kotlin.ir.util.substitute
+import org.jetbrains.kotlin.ir.visitors.IrElementVisitor
+import org.jetbrains.kotlin.ir.visitors.IrElementVisitorVoid
+import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
+import org.jetbrains.kotlin.ir.visitors.acceptVoid
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.name.SpecialNames
+import org.jetbrains.kotlin.psi.KtBinaryExpression
+import org.jetbrains.kotlin.psi.psiUtil.findDescendantOfType
 
 fun IrBuilderWithScope.irGetProperty(receiver: IrExpression, property: IrProperty): IrExpression {
     // In some JVM-specific cases, such as when 'allopen' compiler plugin is applied,
@@ -133,12 +141,44 @@ fun IrFunction.buildBlockBody(
     this.body = IrBlockBodyBuilder(context, Scope(this.symbol), startOffset, endOffset).blockBody(building)
 }
 
-fun <T: IrElement> ScopeWithIr.buildSomeStatements(
+fun IrFunction.buildExpressionBody(
+    context: IrGeneratorContext,
+    startOffset: Int = this.startOffset,
+    endOffset: Int = this.endOffset,
+    building: IrSingleStatementBuilder.() -> IrExpression
+) {
+    this.body = IrExpressionBodyImpl(
+        startOffset, endOffset,
+        IrSingleStatementBuilder(context, Scope(this.symbol), startOffset, endOffset).build(building)
+    )
+}
+
+fun IrField.buildInitializer(
+    context: IrGeneratorContext,
+    startOffset: Int = this.startOffset,
+    endOffset: Int = this.endOffset,
+    building: IrSingleStatementBuilder.() -> IrExpression
+) {
+    this.initializer = IrExpressionBodyImpl(
+        startOffset, endOffset,
+        IrSingleStatementBuilder(context, Scope(this.symbol), startOffset, endOffset).build(building)
+    )
+}
+
+fun <T: IrElement> ScopeWithIr.buildAStatement(
     context: IrGeneratorContext,
     startOffset: Int = irElement.startOffset,
     endOffset: Int = irElement.endOffset,
     building: IrSingleStatementBuilder.() -> T
 ): T = IrSingleStatementBuilder(context, scope, startOffset, endOffset).build(building)
+
+fun ScopeWithIr.buildBlock(
+    context: IrGeneratorContext,
+    startOffset: Int = irElement.startOffset,
+    endOffset: Int = irElement.endOffset,
+    building: IrBlockBuilder.() -> Unit
+): IrContainerExpression = IrBlockBuilder(context, scope, startOffset, endOffset).block { building() }
+
 
 class IrIfBuilder(
     private val builder: IrBuilderWithScope,
@@ -267,3 +307,58 @@ inline fun IrProperty.addSetter(builder: IrFunctionBuilder.() -> Unit = {}): IrS
         setter.parent = this@addSetter.parent
     }
 
+
+fun IrSimpleType.substituteSupertype(superType: IrType): IrSimpleType {
+    val irType = this
+    val irClass = irType.getClass()
+        ?: throw AssertionError("Not a class type: ${irType.render()}")
+    val arguments =
+        irType.arguments.map {
+            it.typeOrNull
+                ?: throw AssertionError("*-projection in supertype arguments: ${irType.render()}")
+        }
+    return superType.substitute(irClass.typeParameters, arguments) as IrSimpleType
+}
+
+interface IrElementCollector<E>: IrElementVisitor<Unit, MutableSet<E>> {
+    override fun visitElement(element: IrElement, data: MutableSet<E>) {
+        element.acceptChildren(this, data)
+    }
+}
+
+@PublishedApi
+internal fun IrElement.findFirstChildInternal(predicate: (IrElement) -> Boolean): IrElement? {
+    // this is seriously funked up, but I don't know a better way to fast-forward it
+    class SuccessException(val value: IrElement?): Exception(null, null, false, false) {
+        override fun fillInStackTrace(): Throwable = this
+    }
+    try {
+        acceptVoid(object: IrElementVisitorVoid {
+            override fun visitElement(element: IrElement) {
+                if (predicate(element)) throw SuccessException(element)
+                element.acceptChildrenVoid(this)
+            }
+        })
+    } catch (e: SuccessException) {
+        return e.value
+    }
+
+    return null
+}
+
+
+
+inline fun <reified E: IrElement> IrElement.findFirstChild(crossinline predicate: (E) -> Boolean = {true}): E? =
+    findFirstChildInternal { it is E && predicate(it) } as? E
+
+fun <S: IrSymbol, IrE: IrMemberAccessExpression<S>> IrE.valueArguments(vararg arguments: IrExpression?): IrE = apply {
+    for (i in 0..arguments.lastIndex) {
+        putValueArgument(i, arguments[i])
+    }
+}
+
+fun <S: IrSymbol, IrE: IrMemberAccessExpression<S>> IrE.typeArguments(vararg arguments: IrType?): IrE = apply {
+    for (i in 0..arguments.lastIndex) {
+        putTypeArgument(i, arguments[i])
+    }
+}

@@ -14,12 +14,15 @@ interface Runnable {
 }
 
 interface Skippable {
-    fun skip() {}
+    fun skip(): Int
 }
 
-class Foo: Runnable by proxyDelegate(), Skippable by (lazyDelegate { object : Skippable{} }) {
+class Foo : Runnable by proxyDelegate(), Skippable by
+(lazyDelegate {
+    Foo()
+}) {
     operator fun <T> getValue(thisRef: Any?, property: KProperty<*>): T {
-        return when(property.name) {
+        return when (property.name) {
             "size" -> 108.toLong()
             else -> error("Unknown property $property")
         } as T
@@ -30,7 +33,7 @@ class Foo: Runnable by proxyDelegate(), Skippable by (lazyDelegate { object : Sk
 //    }
 
     inline fun <reified T> callMember(thisRef: Any?, member: KCallable<T>, arguments: Map<String, Any?>): T {
-        return when(member.name) {
+        return when (member.name) {
             "count" -> 43
             "assign" -> {
                 val name by arguments
