@@ -219,7 +219,7 @@ class DelegationPlaygroundTransformer(
                     +irReturn(
                         irAs(
                             irCall(callMemberFunc).apply {
-                                dispatchReceiver = irGet(newDecl.dispatchReceiverParameter!!)
+                                dispatchReceiver = irThis()
                                 valueArguments(
                                     irGet(newDecl.extensionReceiverParameter ?: newDecl.dispatchReceiverParameter!!),
                                     irGet(ref),
