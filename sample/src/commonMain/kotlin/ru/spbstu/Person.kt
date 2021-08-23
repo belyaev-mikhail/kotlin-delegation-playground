@@ -17,10 +17,7 @@ interface Skippable {
     fun skip(): Int
 }
 
-class Foo : Runnable by proxyDelegate(), Skippable by
-(lazyDelegate {
-    Foo()
-}) {
+class Foo : Runnable by proxyDelegate(), Skippable by (lazyDelegate { Foo() }) {
     operator fun <T> getValue(thisRef: Any?, property: KProperty<*>): T {
         return when (property.name) {
             "size" -> 108.toLong()
