@@ -21,6 +21,7 @@ import com.tschuchort.compiletesting.SourceFile
 import org.intellij.lang.annotations.Language
 import org.jetbrains.kotlin.compiler.plugin.ComponentRegistrar
 import org.jetbrains.kotlin.name.FqName
+import ru.spbstu.plugin.DelegationPlaygroundComponentRegistrar
 import kotlin.test.assertEquals
 
 private val DEFAULT_COMPONENT_REGISTRARS = arrayOf(

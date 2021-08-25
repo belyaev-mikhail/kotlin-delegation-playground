@@ -52,12 +52,16 @@ interface A {
 }
 abstract class B: Mixin<A>, A {
     override fun f() {
+        val moo by lazy { 2 }
+
         self.f(size + 1)
     }
 }
 
 class C : A by mixin(B::class) {
     override fun f(x: Int) {
+        val moo by lazy { 2 }
+
         println(x)
     }
 

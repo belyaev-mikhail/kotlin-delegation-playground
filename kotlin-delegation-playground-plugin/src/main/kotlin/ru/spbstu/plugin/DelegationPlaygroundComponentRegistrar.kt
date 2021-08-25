@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package ru.spbstu
+package ru.spbstu.plugin
 
 import com.google.auto.service.AutoService
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension

@@ -2,6 +2,7 @@ package ru.spbstu
 
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.ScopeWithIr
+import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.jvm.ir.needsAccessor
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.descriptors.Modality
@@ -24,10 +25,13 @@ import org.jetbrains.kotlin.ir.visitors.IrElementVisitor
 import org.jetbrains.kotlin.ir.visitors.IrElementVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
 import org.jetbrains.kotlin.ir.visitors.acceptVoid
+import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.name.SpecialNames
 import org.jetbrains.kotlin.psi.KtBinaryExpression
 import org.jetbrains.kotlin.psi.psiUtil.findDescendantOfType
+import kotlin.reflect.KProperty
+import kotlin.reflect.KProperty1
 
 fun IrBuilderWithScope.irGetProperty(receiver: IrExpression, property: IrProperty): IrExpression {
     // In some JVM-specific cases, such as when 'allopen' compiler plugin is applied,
@@ -425,3 +429,15 @@ inline fun <S: IrSymbol, reified D> IrClass.fakeOverrideFor(entity: D): D?
 
 val IrType.classOrFail
     get() = classifierOrFail as IrClassSymbol
+
+inline fun <reified T: Any> IrPluginContext.referenceClass(): IrClassSymbol =
+    referenceClass(FqName(T::class.qualifiedName!!))!!
+
+inline fun IrClass.findDeclaration(prop: KProperty<*>): IrProperty? =
+    findDeclaration<IrProperty> { it.name == Name.identifier(prop.name) }
+
+inline fun <reified K: Any> IrPluginContext.findDeclaration(prop: KProperty1<K, *>): IrProperty =
+    referenceClass<K>().owner.findDeclaration(prop)!!
+
+val IrField.delegateInitializerCall
+    get() = initializer?.expression as? IrCall
