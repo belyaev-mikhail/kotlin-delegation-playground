@@ -18,22 +18,24 @@ package ru.spbstu
 
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
+import org.jetbrains.kotlin.backend.common.ir.addFakeOverrides
 import org.jetbrains.kotlin.backend.common.ir.copyTo
+import org.jetbrains.kotlin.backend.common.ir.createImplicitParameterDeclarationWithWrappedDescriptor
 import org.jetbrains.kotlin.backend.wasm.ir2wasm.allSuperInterfaces
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
+import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSourceLocation
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
+import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.Modality
+import org.jetbrains.kotlin.fir.symbols.impl.ANONYMOUS_CLASS_ID
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.builders.*
-import org.jetbrains.kotlin.ir.builders.declarations.addField
-import org.jetbrains.kotlin.ir.builders.declarations.addFunction
-import org.jetbrains.kotlin.ir.builders.declarations.addGetter
-import org.jetbrains.kotlin.ir.builders.declarations.addProperty
+import org.jetbrains.kotlin.ir.builders.declarations.*
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
@@ -41,6 +43,8 @@ import org.jetbrains.kotlin.ir.expressions.IrFieldAccessExpression
 import org.jetbrains.kotlin.ir.expressions.IrGetField
 import org.jetbrains.kotlin.ir.expressions.impl.IrCallImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrExpressionBodyImpl
+import org.jetbrains.kotlin.ir.expressions.impl.IrInstanceInitializerCallImpl
+import org.jetbrains.kotlin.ir.overrides.isOverridableMemberOrAccessor
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.IrFieldSymbol
 import org.jetbrains.kotlin.ir.types.*
@@ -49,8 +53,10 @@ import org.jetbrains.kotlin.ir.visitors.IrElementVisitor
 import org.jetbrains.kotlin.ir.visitors.IrElementVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
 import org.jetbrains.kotlin.ir.visitors.acceptVoid
+import org.jetbrains.kotlin.load.java.propertyNameBySetMethodName
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
+import org.jetbrains.kotlin.name.SpecialNames
 import java.lang.IllegalArgumentException
 import kotlin.LazyThreadSafetyMode.NONE
 
@@ -104,6 +110,10 @@ class DelegationPlaygroundTransformer(
         FqName("ru.spbstu.proxyDelegate")
     ).firstOrNull()
 
+    private val mixinFunctions = context.referenceFunctions(
+        FqName("ru.spbstu.mixin")
+    )
+
     @OptIn(ExperimentalStdlibApi::class)
     private val controlledFunctions = buildSet {
         if (pluginGeneratedFunction !== null)
@@ -111,6 +121,7 @@ class DelegationPlaygroundTransformer(
         addAll(lazyDelegateFunctions)
         if (proxyDelegateFunction != null)
             add(proxyDelegateFunction)
+        addAll(mixinFunctions)
     }
 
     private val IrField.delegateInitializerCall
@@ -276,8 +287,102 @@ class DelegationPlaygroundTransformer(
         declaration.transformChildren(remapper, null)
     }
 
+    private fun visitClassNewMixinDelegate(declaration: IrClass, delegate: IrField, iface: IrClassSymbol) {
+        val ifaceType = declaration.superTypes.find { it.classOrNull == iface }!!
+        val initCall = delegate.delegateInitializerCall!!
+
+        val mixinClassType = when(initCall.typeArgumentsCount) {
+            1 -> initCall.getTypeArgument(0)!!
+            2 -> initCall.getTypeArgument(1)!!
+            else -> error("")
+        }
+        delegate.buildInitializer(context) {
+            irBlock {
+
+                val anonymous = context.irFactory.buildClass {
+                    name = SpecialNames.NO_NAME_PROVIDED
+                    origin = DELEGATION_PLAYGROUND_PLUGIN_GENERATED_ORIGIN
+                    visibility = DescriptorVisibilities.LOCAL
+                }.apply makeClass@{
+                    thisReceiver = buildReceiverParameter(this, IrDeclarationOrigin.INSTANCE_RECEIVER, typeWith())
+                    superTypes = listOf(mixinClassType, ifaceType)
+                    addConstructor {
+                        origin = DELEGATION_PLAYGROUND_PLUGIN_GENERATED_ORIGIN
+                        isPrimary = true
+                    }.apply makeConstructor@{
+                        buildBlockBody(context) {
+                            +when {
+                                !mixinClassType.isInterface() -> irDelegatingConstructorCall(mixinClassType.classOrNull?.owner?.primaryConstructor!!)
+                                else -> irDelegatingConstructorCall(any.primaryConstructor!!)
+                            }
+                        }
+                    }
+
+                    addFakeOverrides(irBuiltins)
+
+                    val selfProp = properties.find { it.name == Name.identifier("self") }!!
+                    overrideProperty(selfProp).apply {
+                        getter!!.apply {
+
+                            dispatchReceiverParameter = this@makeClass.thisReceiver?.copyTo(this)
+                            buildBlockBody(context) { +irReturn(irGet(declaration.thisReceiver!!)) }
+                        }
+                    }
+                    val ifaceFuncs = iface.functions
+                    for (it in ifaceFuncs) {
+                        val f = it.owner
+                        if (f.isFakeOverride) continue
+                        if (mixinClassType.classOrFail.owner.overrides(f)) continue
+                        check (declaration
+                            .overrideFor(f)
+                            ?.takeIf { it.origin != IrDeclarationOrigin.DELEGATED_MEMBER } != null) {
+                            "Neither mixin class nor declaration override function ${f.dumpKotlinLike()}"
+                        }
+                        val newFunc = overrideFunction(f)
+                        newFunc.buildBlockBody(context) {
+                            context.irFactory.buildProperty {
+                                name = Name.identifier("Hello")
+                            }
+                            +irReturn(irCall(it).apply {
+                                dispatchReceiver = irGet(declaration.thisReceiver!!)
+                                valueArguments(irArgs())
+                            })
+                        }
+                    }
+
+                    val ifaceProps = iface.owner.properties
+                    for (it in ifaceProps) {
+                        val f = it.getter ?: continue
+                        if (f.isFakeOverride) continue
+                        if (mixinClassType.classOrFail.owner.overrides(it)) continue
+                        check (declaration.overrides(it)) {
+                            "Neither mixin class nor declaration override property ${it.dumpKotlinLike()}"
+                        }
+
+                        val newProp = overrideProperty(it)
+                        newProp.getter?.buildBlockBody(context) {
+                            +irReturn(irCall(it.getter!!.symbol).apply {
+                                dispatchReceiver = irGet(declaration.thisReceiver!!)
+                            })
+                        }
+                        newProp.setter?.buildBlockBody(context) {
+                            irCall(it.setter!!.symbol).apply {
+                                dispatchReceiver = irGet(declaration.thisReceiver!!)
+                                valueArguments(irArgs())
+                            }
+                        }
+                    }
+
+                }
+                +anonymous
+                +irCall(anonymous.primaryConstructor!!.symbol)
+            }.patchDeclarationParents(delegate)
+        }
+    }
+
     @OptIn(ObsoleteDescriptorBasedAPI::class)
     override fun visitClassNew(declaration: IrClass): IrStatement {
+
         val possibleDelegates = declaration.fields.filter {
             when {
                 it.origin != IrDeclarationOrigin.DELEGATE -> false
@@ -285,6 +390,7 @@ class DelegationPlaygroundTransformer(
             }
         }.toList()
         if (possibleDelegates.isEmpty()) return super.visitClassNew(declaration)
+        //messageCollector.report(CompilerMessageSeverity.ERROR, declaration.dumpKotlinLike())
 
         val delegateInfo: Map<IrFieldSymbol, IrClassSymbol> =
             declaration.declarations.filter {
@@ -319,6 +425,11 @@ class DelegationPlaygroundTransformer(
                     visitClassNewLazyDelegate(declaration, delegate, delegateInfo[delegate.symbol]!!)
                     declaration.declarations.remove(delegate)
                 }
+                if (delegate.delegateInitializerCall!!.symbol in mixinFunctions) {
+                    visitClassNewMixinDelegate(declaration, delegate, delegateInfo[delegate.symbol]!!)
+                    // do not remove original property for mixin for good housekeeping
+                    messageCollector.report(CompilerMessageSeverity.WARNING, delegate.dumpKotlinLike())
+                }
             } catch (ex: IllegalArgumentException) {
                 messageCollector.report(
                     CompilerMessageSeverity.ERROR,
@@ -335,7 +446,6 @@ class DelegationPlaygroundTransformer(
 
         return super.visitClassNew(declaration)
     }
-
 
 }
 
@@ -415,7 +525,12 @@ private fun IrClass.overrideProperty(original: IrProperty): IrProperty {
             this.isExternal = false
 
         }.apply {
-            this.dispatchReceiverParameter = this@overrideProperty.thisReceiver?.copyTo(this)
+            this.dispatchReceiverParameter = this@overrideProperty.thisReceiver?.copyTo(
+                this,
+                type = this@overrideProperty.defaultType,
+                origin = DELEGATION_PLAYGROUND_PLUGIN_GENERATED_ORIGIN
+            )
+            overriddenSymbols = overriddenSymbols + existing.getter?.overriddenSymbols.orEmpty()
         }
     }
 
@@ -433,7 +548,12 @@ private fun IrClass.overrideProperty(original: IrProperty): IrProperty {
             this.endOffset = SYNTHETIC_OFFSET
             this.isExternal = false
         }.apply {
-            this.dispatchReceiverParameter = this@overrideProperty.thisReceiver?.copyTo(this)
+            this.dispatchReceiverParameter = this@overrideProperty.thisReceiver?.copyTo(
+                this,
+                type = this@overrideProperty.defaultType,
+                origin = DELEGATION_PLAYGROUND_PLUGIN_GENERATED_ORIGIN
+            )
+            overriddenSymbols = overriddenSymbols + existing.setter?.overriddenSymbols.orEmpty()
         }
     }
 

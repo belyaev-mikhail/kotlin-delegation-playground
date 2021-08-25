@@ -15,11 +15,11 @@ import org.jetbrains.kotlin.ir.builders.declarations.buildVariable
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.expressions.impl.*
+import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.IrFunctionSymbol
 import org.jetbrains.kotlin.ir.symbols.IrSymbol
 import org.jetbrains.kotlin.ir.types.*
-import org.jetbrains.kotlin.ir.util.render
-import org.jetbrains.kotlin.ir.util.substitute
+import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.ir.visitors.IrElementVisitor
 import org.jetbrains.kotlin.ir.visitors.IrElementVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
@@ -101,6 +101,10 @@ fun IrBuilderWithScope.irArg(number: Int, irFunction: IrFunction = parent.contai
     )
 }
 
+fun IrBuilderWithScope.irArgs(irFunction: IrFunction = parent.containingFunction()): List<IrExpression> {
+    return irFunction.valueParameters.map { irGet(it) }
+}
+
 fun IrBuilderWithScope.irFirst(function: IrFunction = parent.containingFunction()): IrExpression = irArg(0, function)
 
 fun <T : IrElement> IrStatementsBuilder<T>.irVariable(
@@ -147,7 +151,7 @@ fun IrFunction.buildExpressionBody(
     endOffset: Int = this.endOffset,
     building: IrSingleStatementBuilder.() -> IrExpression
 ) {
-    this.body = IrExpressionBodyImpl(
+    this.body = context.irFactory.createExpressionBody(
         startOffset, endOffset,
         IrSingleStatementBuilder(context, Scope(this.symbol), startOffset, endOffset).build(building)
     )
@@ -362,3 +366,62 @@ fun <S: IrSymbol, IrE: IrMemberAccessExpression<S>> IrE.typeArguments(vararg arg
         putTypeArgument(i, arguments[i])
     }
 }
+
+fun <S: IrSymbol, IrE: IrMemberAccessExpression<S>> IrE.valueArguments(arguments: List<IrExpression?>): IrE = apply {
+    for (i in 0..arguments.lastIndex) {
+        putValueArgument(i, arguments[i])
+    }
+}
+
+fun <S: IrSymbol, IrE: IrMemberAccessExpression<S>> IrE.typeArguments(arguments: List<IrType?>): IrE = apply {
+    for (i in 0..arguments.lastIndex) {
+        putTypeArgument(i, arguments[i])
+    }
+}
+
+inline fun <S: IrSymbol, reified D> IrClass.overrides(entity: D): Boolean
+where D: IrOverridableDeclaration<S>, D: IrDeclarationWithName =
+    declarations
+        .asSequence()
+        .mapNotNull { decl ->
+            (decl as? D)?.takeIf { it.isReal && it.name == entity.name }
+        }
+        .any {
+            entity.symbol in it.overriddenSymbols
+        }
+
+inline fun IrClass.overrides(entity: IrProperty): Boolean =
+    properties
+        .asSequence()
+        .mapNotNull { decl ->
+            (decl as? IrProperty)?.takeIf { it.isReal && it.name == entity.name }
+        }
+        .any {
+            val getter = it.getter
+            getter != null && entity.getter?.symbol in getter.overriddenSymbols
+        }
+
+inline fun <S: IrSymbol, reified D> IrClass.overrideFor(entity: D): D?
+    where D: IrOverridableDeclaration<S>, D: IrDeclarationWithName =
+    declarations
+        .asSequence()
+        .mapNotNull { decl ->
+            (decl as? D)?.takeIf { it.isReal && it.name == entity.name }
+        }
+        .find {
+            entity.symbol in it.overriddenSymbols
+        }
+
+inline fun <S: IrSymbol, reified D> IrClass.fakeOverrideFor(entity: D): D?
+    where D: IrOverridableDeclaration<S>, D: IrDeclarationWithName =
+    declarations
+        .asSequence()
+        .mapNotNull { decl ->
+            (decl as? D)?.takeIf { it.isFakeOverride && it.name == entity.name }
+        }
+        .find {
+            entity.symbol in it.overriddenSymbols
+        }
+
+val IrType.classOrFail
+    get() = classifierOrFail as IrClassSymbol

@@ -17,7 +17,9 @@ interface Skippable {
     fun skip(): Int
 }
 
-class Foo : Runnable by proxyDelegate(), Skippable by (lazyDelegate { Foo() }) {
+class Foo : Runnable by proxyDelegate(), Skippable by (lazyDelegate { object: Skippable{
+    override fun skip(): Int =2
+} }) {
     operator fun <T> getValue(thisRef: Any?, property: KProperty<*>): T {
         return when (property.name) {
             "size" -> 108.toLong()
@@ -29,7 +31,7 @@ class Foo : Runnable by proxyDelegate(), Skippable by (lazyDelegate { Foo() }) {
 //        TODO("Not yet implemented")
 //    }
 
-    inline fun <reified T> callMember(thisRef: Any?, member: KCallable<T>, arguments: Map<String, Any?>): T {
+    private inline fun <reified T> callMember(thisRef: Any?, member: KCallable<T>, arguments: Map<String, Any?>): T {
         return when (member.name) {
             "count" -> 43
             "assign" -> {
@@ -41,5 +43,24 @@ class Foo : Runnable by proxyDelegate(), Skippable by (lazyDelegate { Foo() }) {
         } as T
     }
 
+}
+
+interface A {
+    val size: Int
+    fun f(x: Int): Unit
+    fun f() = f(size)
+}
+abstract class B: Mixin<A>, A {
+    override fun f() {
+        self.f(size + 1)
+    }
+}
+
+class C : A by mixin(B::class) {
+    override fun f(x: Int) {
+        println(x)
+    }
+
+    override val size: Int = 4
 }
 

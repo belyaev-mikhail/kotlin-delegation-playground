@@ -14,4 +14,10 @@ class PersonTest {
         assertEquals(3, Foo().assign(""))
         assertEquals(108, Foo().size)
     }
+
+    @Test
+    fun ssss() {
+        println(C().f())
+    }
+
 }
