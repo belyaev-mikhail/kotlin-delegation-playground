@@ -37,10 +37,7 @@ class LazyDelegateAdapter(val context: IrPluginContext) {
             params.size == 1 && params.first().type.isFunction()
         }
     }
-    fun visitClass(
-        context: IrPluginContext,
-        declaration: IrClass, delegate: IrField, iface: IrClassSymbol
-    ) {
+    operator fun invoke(declaration: IrClass, delegate: IrField, iface: IrClassSymbol) {
         val ifaceType = declaration.superTypes.find { it.classOrNull == iface }!!
 
         val initCall = delegate.delegateInitializerCall!!
