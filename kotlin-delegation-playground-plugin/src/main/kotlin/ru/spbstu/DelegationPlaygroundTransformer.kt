@@ -18,32 +18,58 @@ package ru.spbstu
 
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
+import org.jetbrains.kotlin.backend.common.ir.*
+import org.jetbrains.kotlin.backend.common.lower.irBlock
+import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocationWithRange
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
+import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
+import org.jetbrains.kotlin.descriptors.DescriptorVisibility
+import org.jetbrains.kotlin.descriptors.Modality
+import org.jetbrains.kotlin.fir.declarations.builder.buildValueParameter
 import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.ObsoleteDescriptorBasedAPI
+import org.jetbrains.kotlin.ir.builders.*
+import org.jetbrains.kotlin.ir.builders.declarations.addFunction
+import org.jetbrains.kotlin.ir.builders.declarations.addValueParameter
+import org.jetbrains.kotlin.ir.builders.declarations.buildFun
 import org.jetbrains.kotlin.ir.declarations.*
+import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
 import org.jetbrains.kotlin.ir.expressions.IrGetField
+import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
+import org.jetbrains.kotlin.ir.expressions.impl.IrFunctionExpressionImpl
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.IrFieldSymbol
 import org.jetbrains.kotlin.ir.types.classOrNull
-import org.jetbrains.kotlin.ir.util.dumpKotlinLike
-import org.jetbrains.kotlin.ir.util.fields
-import org.jetbrains.kotlin.ir.util.isInterface
+import org.jetbrains.kotlin.ir.types.typeWith
+import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
+import org.jetbrains.kotlin.name.SpecialNames
 import kotlin.reflect.KFunction
 
-object DELEGATION_PLAYGROUND_PLUGIN_GENERATED_ORIGIN : IrDeclarationOriginImpl("DELEGATION_PLAYGROUND_PLUGIN_GENERATED", true)
+object DELEGATION_PLAYGROUND_PLUGIN_GENERATED_ORIGIN :
+    IrDeclarationOriginImpl("DELEGATION_PLAYGROUND_PLUGIN_GENERATED", true)
 
 fun <F> nameOf(f: F): Name
-where F: KFunction<*>, F: () -> Any? { return Name.identifier(f.name) }
+    where F : KFunction<*>, F : () -> Any? {
+    return Name.identifier(f.name)
+}
+
 fun <F> nameOf(f: F, dis: Unit = Unit): Name
-where F: KFunction<*>, F: (Nothing) -> Any? { return Name.identifier(f.name) }
+    where F : KFunction<*>, F : (Nothing) -> Any? {
+    return Name.identifier(f.name)
+}
+
 fun <F> nameOf(f: F, dis: Unit = Unit, dis2: Unit = Unit): Name
-where F: KFunction<*>, F: (Nothing, Nothing) -> Any? { return Name.identifier(f.name) }
+    where F : KFunction<*>, F : (Nothing, Nothing) -> Any? {
+    return Name.identifier(f.name)
+}
+
 fun <F> nameOf(f: F, dis: Unit = Unit, dis2: Unit = Unit, dis3: Unit = Unit): Name
-where F: KFunction<*>, F: (Nothing, Nothing, Nothing) -> Any? { return Name.identifier(f.name) }
+    where F : KFunction<*>, F : (Nothing, Nothing, Nothing) -> Any? {
+    return Name.identifier(f.name)
+}
 
 operator fun FqName.plus(name: Name) = child(name)
 
@@ -89,6 +115,9 @@ class DelegationPlaygroundTransformer(
 
     @OptIn(ObsoleteDescriptorBasedAPI::class)
     override fun visitClassNew(declaration: IrClass): IrStatement {
+        if (declaration.hasAnnotation(FqName(ErasableDelegate::class))) {
+            visitErasableDelegate(declaration)
+        }
 
         val possibleDelegates = declaration.fields.filter {
             when {
@@ -106,7 +135,7 @@ class DelegationPlaygroundTransformer(
                     is IrProperty -> it.getter!!
                     else -> error("Don't know how to handle delegated entity ${it.dumpKotlinLike()}")
                 }
-            }.associateBy (
+            }.associateBy(
                 keySelector = {
                     it.findFirstChild<IrGetField>()?.symbol
                         ?: error("Cannot determine overriden interface for function ${it.name.asString()}")
@@ -137,18 +166,87 @@ class DelegationPlaygroundTransformer(
             } catch (ex: IllegalArgumentException) {
                 messageCollector.report(
                     CompilerMessageSeverity.ERROR,
-                    ex.message ?: "Unknown error"
+                    ex.message ?: "Unknown error",
+                    delegate.location
                 )
                 throw ex
             } catch (ex: IllegalStateException) {
                 messageCollector.report(
                     CompilerMessageSeverity.ERROR,
-                    ex.message ?: "Unknown error"
+                    ex.message ?: "Unknown error",
+                    delegate.location
                 )
                 throw ex
             }
 
         return super.visitClassNew(declaration)
+    }
+
+    private fun visitErasableDelegate(declaration: IrClass) {
+        messageCollector.report(CompilerMessageSeverity.ERROR, declaration.dumpKotlinLike())
+
+        val field = declaration.properties.singleOrNull { it.backingField != null }
+        field ?: error("Erasable delegate ${declaration.kotlinFqName.asString()} must have a single field")
+
+        val getValue = declaration.findDeclaration<IrSimpleFunction> {
+            it.name == Name.identifier("getValue") && it.isOperator
+        }
+        getValue
+            ?: error("No getValue operator function found for erasable delegate class ${declaration.kotlinFqName.asString()}")
+
+        val setterArgType = context.irBuiltIns.function(1).typeWith(field.type, context.irBuiltIns.unitType)
+        val getValueImpl = declaration.addFunction {
+            updateFrom(getValue)
+            isOperator = false
+            modality = Modality.FINAL
+            isInline = true
+            name = Name.identifier("getValue-impl")
+            returnType = getValue.returnType
+        }.apply {
+            body = getValue.body?.patchDeclarationParents(this)
+            copyParameterDeclarationsFrom(getValue)
+
+
+
+            addValueParameter {
+                name = Name.identifier("oldValue")
+                type = field.type
+            }
+            addValueParameter {
+                name = Name.identifier("setter")
+                type = setterArgType
+            }
+        }
+        getValue.buildBlockBody(context) {
+            val lambda = irLambda(setterArgType) {
+                addValueParameter {
+                    name = Name.identifier("value")
+                    type = field.type
+                }
+                buildBlockBody(context) {
+                    when (val setter = field.setter) {
+                        null -> {
+                            +irUnit()
+                        }
+                        else -> {
+                            +irCall(setter).apply {
+                                dispatchReceiver = irGet(getValue.dispatchReceiverParameter!!)
+                                valueArguments(irArg(0))
+                            }
+                        }
+                    }
+
+                }
+            }
+            +irReturn(
+                irCall(getValueImpl).apply {
+                    valueArguments(irArgs() + irGetProperty(irThis(), field) + lambda)
+                }
+            )
+        }
+
+        messageCollector.report(CompilerMessageSeverity.ERROR, declaration.dumpKotlinLike())
+
     }
 
 }

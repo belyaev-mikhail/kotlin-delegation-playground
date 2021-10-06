@@ -5,12 +5,15 @@ import org.jetbrains.kotlin.backend.common.ScopeWithIr
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.jvm.ir.needsAccessor
 import org.jetbrains.kotlin.builtins.StandardNames
+import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocationWithRange
+import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.fir.backend.Fir2IrConverter
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.builders.declarations.IrFunctionBuilder
+import org.jetbrains.kotlin.ir.builders.declarations.addValueParameter
 import org.jetbrains.kotlin.ir.builders.declarations.buildFun
 import org.jetbrains.kotlin.ir.builders.declarations.buildVariable
 import org.jetbrains.kotlin.ir.declarations.*
@@ -30,6 +33,7 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.name.SpecialNames
 import org.jetbrains.kotlin.psi.KtBinaryExpression
 import org.jetbrains.kotlin.psi.psiUtil.findDescendantOfType
+import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
 import kotlin.reflect.KProperty1
 
@@ -305,6 +309,26 @@ fun IrBuilderWithScope.irPropertyReference(
     )
 }
 
+
+fun IrBuilderWithScope.irLambda(type: IrType, creator: IrFunction.() -> Unit): IrExpression {
+    val func = context.irFactory.buildFun {
+        name = SpecialNames.ANONYMOUS_FUNCTION
+        returnType = context.irBuiltIns.unitType
+        origin = IrDeclarationOrigin.LOCAL_FUNCTION_FOR_LAMBDA
+        visibility = DescriptorVisibilities.LOCAL
+    }.apply {
+        creator()
+        parent = scope.getLocalDeclarationParent()
+    }
+    return IrFunctionExpressionImpl(
+        startOffset = startOffset,
+        endOffset = endOffset,
+        origin = IrStatementOrigin.LAMBDA,
+        type = type,
+        function = func
+    )
+}
+
 inline fun IrProperty.addSetter(builder: IrFunctionBuilder.() -> Unit = {}): IrSimpleFunction =
     factory.buildFun {
         name = Name.special("<set-${this@addSetter.name}>")
@@ -430,6 +454,9 @@ inline fun <S: IrSymbol, reified D> IrClass.fakeOverrideFor(entity: D): D?
 val IrType.classOrFail
     get() = classifierOrFail as IrClassSymbol
 
+inline fun <reified T: Any> FqName(klass: KClass<T>) = FqName(klass.qualifiedName!!)
+inline fun <reified T: Any> FqName() = FqName(T::class.qualifiedName!!)
+
 inline fun <reified T: Any> IrPluginContext.referenceClass(): IrClassSymbol =
     referenceClass(FqName(T::class.qualifiedName!!))!!
 
@@ -441,3 +468,18 @@ inline fun <reified K: Any> IrPluginContext.findDeclaration(prop: KProperty1<K, 
 
 val IrField.delegateInitializerCall
     get() = initializer?.expression as? IrCall
+
+val IrProperty.type: IrType
+    get() = backingField?.type ?: getter?.returnType !!
+
+val IrDeclaration.location
+    get() = fileEntry.getSourceRangeInfo(startOffset, endOffset).run {
+        CompilerMessageLocationWithRange.create(
+            filePath,
+            startLineNumber,
+            startColumnNumber,
+            endLineNumber,
+            endColumnNumber,
+            ""
+        )
+    }
