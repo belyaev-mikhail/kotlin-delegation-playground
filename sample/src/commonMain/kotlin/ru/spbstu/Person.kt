@@ -74,11 +74,16 @@ class C : A by mixin(B::class) {
 class LateInit<T> {
     var field: Any? = UNINITIALIZED
 
-    inline fun getValue(thisRef: Any?, property: KProperty<*>): T {
+    inline fun getValueImpl(thisRef: Any?, property: KProperty<*>, getter: () -> Any?, setter: (Any?) -> Unit): T {
+        return if (getter() === UNINITIALIZED) throw IllegalStateException("Field not initialized yet")
+        else getter() as T
+    }
+
+    inline operator fun getValue(thisRef: Any?, property: KProperty<*>): T {
         return if (field === UNINITIALIZED) throw IllegalStateException("Field not initialized yet")
         else field as T
     }
-    inline fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
+    inline operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
         if (field !== UNINITIALIZED) throw IllegalStateException("Field already initialized")
         else {
             field = value
@@ -106,7 +111,7 @@ class MyLazy<T> {
         field = value
     }
 
-    inline fun getValue(thisRef: Any?, property: KProperty<*>): T {
+    inline operator fun getValue(thisRef: Any?, property: KProperty<*>): T {
         when (val field = field) {
             is ToBeComputed<*> -> {
                 this.field = field.body()
@@ -114,4 +119,9 @@ class MyLazy<T> {
         }
         return field as T
     }
+
+    inline fun whatever(body: () -> T) {
+        body()
+    }
 }
+

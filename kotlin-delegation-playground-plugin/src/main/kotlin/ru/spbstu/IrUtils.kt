@@ -3,6 +3,7 @@ package ru.spbstu
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.ScopeWithIr
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
+import org.jetbrains.kotlin.backend.jvm.codegen.anyTypeArgument
 import org.jetbrains.kotlin.backend.jvm.ir.needsAccessor
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocationWithRange
@@ -71,6 +72,19 @@ fun IrBuilderWithScope.irMemberCall(
     dispatchReceiver = receiver
     for (i in 0..arguments.lastIndex) {
         putValueArgument(i, arguments[i])
+    }
+}
+
+fun IrBuilderWithScope.irMemberCallByName(
+    receiver: IrExpression,
+    methodName: String,
+    returnType: IrType,
+    vararg arguments: IrExpression
+): IrFunctionAccessExpression {
+    val func = receiver.type.classOrFail.getSimpleFunction(methodName) ?: throw IllegalArgumentException()
+    return irCall(func, returnType).apply {
+        dispatchReceiver = receiver
+        valueArguments(*arguments)
     }
 }
 
@@ -313,7 +327,9 @@ fun IrBuilderWithScope.irPropertyReference(
 fun IrBuilderWithScope.irLambda(type: IrType, creator: IrFunction.() -> Unit): IrExpression {
     val func = context.irFactory.buildFun {
         name = SpecialNames.ANONYMOUS_FUNCTION
-        returnType = context.irBuiltIns.unitType
+        check(type.isFunctionOrKFunction())
+        check(type is IrSimpleType)
+        returnType = type.arguments.last().typeOrNull!!
         origin = IrDeclarationOrigin.LOCAL_FUNCTION_FOR_LAMBDA
         visibility = DescriptorVisibilities.LOCAL
     }.apply {
