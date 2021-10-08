@@ -23,45 +23,65 @@ import org.jetbrains.kotlin.compiler.plugin.ComponentRegistrar
 import org.jetbrains.kotlin.name.FqName
 import ru.spbstu.plugin.DelegationPlaygroundComponentRegistrar
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.test.asserter
 
 private val DEFAULT_COMPONENT_REGISTRARS = arrayOf(
-  DelegationPlaygroundComponentRegistrar(setOf(FqName("DataLike")))
+    DelegationPlaygroundComponentRegistrar(setOf(FqName("DataLike")))
 )
 
 fun compile(
-  list: List<SourceFile>,
-  vararg plugins: ComponentRegistrar = DEFAULT_COMPONENT_REGISTRARS
+    list: List<SourceFile>,
+    vararg plugins: ComponentRegistrar = DEFAULT_COMPONENT_REGISTRARS
 ): KotlinCompilation.Result {
-  return KotlinCompilation().apply {
-    sources = list
-    useIR = true
-    messageOutputStream = System.out
-    compilerPlugins = plugins.toList()
-    inheritClassPath = true
-  }.compile()
+    return KotlinCompilation().apply {
+        sources = list
+        useIR = true
+        messageOutputStream = System.out
+        compilerPlugins = plugins.toList()
+        inheritClassPath = true
+    }.compile()
+}
+
+fun assertCompiles(
+    @Language("kotlin") source: String,
+    vararg plugins: ComponentRegistrar = DEFAULT_COMPONENT_REGISTRARS
+): KotlinCompilation.Result {
+    val result = compile(
+        listOf(SourceFile.kotlin("main.kt", source, trimIndent = false)),
+        *plugins,
+    )
+
+    asserter.assertTrue(actual = KotlinCompilation.ExitCode.OK == result.exitCode, lazyMessage = {
+        result.messages
+    })
+    return result
 }
 
 fun executeSource(
-  @Language("kotlin") source: String,
-  vararg plugins: ComponentRegistrar = DEFAULT_COMPONENT_REGISTRARS
+    @Language("kotlin") source: String,
+    vararg plugins: ComponentRegistrar = DEFAULT_COMPONENT_REGISTRARS
 ): Any? {
-  val result = compile(
-    listOf(SourceFile.kotlin("main.kt", source, trimIndent = false)),
-    *plugins,
-  )
-  assertEquals(KotlinCompilation.ExitCode.OK, result.exitCode)
+    val result = compile(
+        listOf(SourceFile.kotlin("main.kt", source, trimIndent = false)),
+        *plugins,
+    )
 
-  val kClazz = result.classLoader.loadClass("MainKt")
-  val main = kClazz.declaredMethods.single { it.name == "main" && it.parameterCount == 0 }
-  try {
-    return main.invoke(null)
-  } catch (t: Throwable) {
-    return t
-  }
+    asserter.assertTrue(actual = KotlinCompilation.ExitCode.OK == result.exitCode, lazyMessage = {
+        result.messages
+    })
+
+    val kClazz = result.classLoader.loadClass("MainKt")
+    val main = kClazz.declaredMethods.single { it.name == "main" && it.parameterCount == 0 }
+    try {
+        return main.invoke(null)
+    } catch (t: Throwable) {
+        return t
+    }
 }
 
 fun executeExpr(@Language("kotlin", prefix = "fun __aa() = ") mainBody: String) = executeSource(
-  """
+    """
 fun main() = run { 
   $mainBody 
 }

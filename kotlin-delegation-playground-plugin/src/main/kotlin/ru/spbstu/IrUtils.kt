@@ -1,20 +1,13 @@
 package ru.spbstu
 
-import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.ScopeWithIr
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
-import org.jetbrains.kotlin.backend.jvm.codegen.anyTypeArgument
-import org.jetbrains.kotlin.backend.jvm.ir.needsAccessor
-import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocationWithRange
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.Modality
-import org.jetbrains.kotlin.fir.backend.Fir2IrConverter
 import org.jetbrains.kotlin.ir.IrElement
-import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.builders.declarations.IrFunctionBuilder
-import org.jetbrains.kotlin.ir.builders.declarations.addValueParameter
 import org.jetbrains.kotlin.ir.builders.declarations.buildFun
 import org.jetbrains.kotlin.ir.builders.declarations.buildVariable
 import org.jetbrains.kotlin.ir.declarations.*
@@ -22,6 +15,7 @@ import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.expressions.impl.*
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.IrFunctionSymbol
+import org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol
 import org.jetbrains.kotlin.ir.symbols.IrSymbol
 import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.*
@@ -32,8 +26,6 @@ import org.jetbrains.kotlin.ir.visitors.acceptVoid
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.name.SpecialNames
-import org.jetbrains.kotlin.psi.KtBinaryExpression
-import org.jetbrains.kotlin.psi.psiUtil.findDescendantOfType
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
 import kotlin.reflect.KProperty1
@@ -84,7 +76,7 @@ fun IrBuilderWithScope.irMemberCallByName(
     val func = receiver.type.classOrFail.getSimpleFunction(methodName) ?: throw IllegalArgumentException()
     return irCall(func, returnType).apply {
         dispatchReceiver = receiver
-        valueArguments(*arguments)
+        if (arguments.isNotEmpty()) valueArguments(*arguments)
     }
 }
 
@@ -172,11 +164,9 @@ fun IrFunction.buildExpressionBody(
     startOffset: Int = this.startOffset,
     endOffset: Int = this.endOffset,
     building: IrSingleStatementBuilder.() -> IrExpression
-) {
-    this.body = context.irFactory.createExpressionBody(
-        startOffset, endOffset,
-        IrSingleStatementBuilder(context, Scope(this.symbol), startOffset, endOffset).build(building)
-    )
+) = buildBlockBody(context, startOffset, endOffset) {
+    val res = IrSingleStatementBuilder(context, Scope(this@buildExpressionBody.symbol), startOffset, endOffset).build(building)
+    +irReturn(res, this@buildExpressionBody.symbol)
 }
 
 fun IrField.buildInitializer(
@@ -405,6 +395,12 @@ fun <S: IrSymbol, IrE: IrMemberAccessExpression<S>> IrE.valueArguments(vararg ar
     }
 }
 
+fun <S: IrSymbol, IrE: IrMemberAccessExpression<S>> IrE.addValueArguments(offset: Int, vararg arguments: IrExpression?): IrE = apply {
+    for (i in 0..arguments.lastIndex) {
+        putValueArgument(offset + i, arguments[i])
+    }
+}
+
 fun <S: IrSymbol, IrE: IrMemberAccessExpression<S>> IrE.typeArguments(vararg arguments: IrType?): IrE = apply {
     for (i in 0..arguments.lastIndex) {
         putTypeArgument(i, arguments[i])
@@ -486,7 +482,10 @@ val IrField.delegateInitializerCall
     get() = initializer?.expression as? IrCall
 
 val IrProperty.type: IrType
-    get() = backingField?.type ?: getter?.returnType !!
+    get() = when {
+        isDelegated -> getter?.returnType!!
+        else -> backingField?.type ?: getter?.returnType !!
+    }
 
 val IrDeclaration.location
     get() = fileEntry.getSourceRangeInfo(startOffset, endOffset).run {
@@ -499,3 +498,28 @@ val IrDeclaration.location
             ""
         )
     }
+
+fun IrBuilderWithScope.irReturn(value: IrExpression, from: IrReturnTargetSymbol) =
+    IrReturnImpl(
+        startOffset, endOffset,
+        context.irBuiltIns.nothingType,
+        from,
+        value
+    )
+
+fun IrMemberAccessExpression<*>.addTypeArguments(shift: Int, vararg typeArgument: IrType?) {
+    for (i in typeArgument.indices) {
+        putTypeArgument(i + shift, typeArgument[i])
+    }
+}
+
+fun IrMemberAccessExpression<*>.allTypeArguments() = (0 until typeArgumentsCount).map { getTypeArgument(it) }
+
+inline fun <reified T : IrElement> T.deepCopyWithSymbols(
+    initialParent: IrDeclarationParent? = null,
+    sr: DeepCopySymbolRemapper
+): T {
+    acceptVoid(sr)
+    val typeRemapper = DeepCopyTypeRemapper(sr)
+    return transform(DeepCopyIrTreeWithSymbols(sr, typeRemapper), null).patchDeclarationParents(initialParent) as T
+}

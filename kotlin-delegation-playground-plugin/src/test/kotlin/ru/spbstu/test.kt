@@ -16,6 +16,8 @@
 
 package ru.spbstu
 
+import org.jetbrains.kotlin.com.intellij.psi.compiled.ClassFileDecompilers
+import org.jetbrains.org.objectweb.asm.ClassReader
 import org.junit.Test
 import ru.spbstu.executeExpr
 import ru.spbstu.executeSource
@@ -24,24 +26,51 @@ import kotlin.test.assertEquals
 class CompilerTest {
     @Test
     fun simple() {
-        assertEquals(2, executeExpr("2"))
-        assertEquals(
-            2, executeSource(
-                """
-        annotation class DataLike(val genEquals: Boolean = true)
-        const val dddd = true
-        fun <T> generated(): T = TODO()
-        @DataLike(dddd)
-        class Data(val x: Int, val y: List<String>?): Comparable<Data> {
-            override fun compareTo(other: Data): Int = generated() 
+        assertCompiles(
+            """
+            package ru.spbstu
+            
+            import kotlin.reflect.KProperty  
+            annotation class ErasableDelegate
+
+            @ErasableDelegate
+            class LateInit<T> {
+                var field: Any? = UNINITIALIZED
+
+                inline operator fun getValue(thisRef: Any?, property: KProperty<*>): T {
+                    return if (field === UNINITIALIZED) throw IllegalStateException("Field not initialized yet")
+                    else field as T
+                }
+                inline operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
+                    if (field !== UNINITIALIZED) throw IllegalStateException("Field already initialized")
+                    else {
+                        field = value
+                    }
+                }
+                
+                inline fun <T> getValueImpl(thisRef: Any?, property: KProperty<*>, getter: () -> Any?, setter: (Any?) -> Unit): T {
+                    return if (getter() === UNINITIALIZED) throw IllegalStateException("Field not initialized yet")
+                    else getter() as T
+                }
+
+
+                companion object {
+                    @PublishedApi
+                    internal val UNINITIALIZED = Any()
+                    
+                }
+            }
+            
+            class TestClass {
+                val x: Int by LateInit()
+            }
+
+        """.trimIndent()).apply {
+            val genClasses = this.compiledClassAndResourceFiles.joinToString(" ") { it.absolutePath }
+            println(genClasses)
+            ProcessBuilder("javap -p -c ${genClasses}".split(" ")).inheritIO().start().waitFor()
         }
-        fun main(): Int {
-            val data1 = Data(1, listOf())
-            println(data1)
-            return if (Data(2, listOf()) == Data(2, listOf())) 2 else 3
-        }
-    """
-            )
-        )
+
+
     }
 }

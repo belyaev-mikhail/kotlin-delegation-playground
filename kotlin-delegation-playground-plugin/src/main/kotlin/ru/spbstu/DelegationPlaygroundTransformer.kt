@@ -17,6 +17,7 @@
 package ru.spbstu
 
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
+import org.jetbrains.kotlin.backend.common.deepCopyWithVariables
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.ir.*
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
@@ -29,11 +30,9 @@ import org.jetbrains.kotlin.ir.builders.declarations.addFunction
 import org.jetbrains.kotlin.ir.builders.declarations.addValueParameter
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.*
-import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
-import org.jetbrains.kotlin.ir.symbols.IrFieldSymbol
-import org.jetbrains.kotlin.ir.types.IrType
-import org.jetbrains.kotlin.ir.types.classOrNull
-import org.jetbrains.kotlin.ir.types.typeWith
+import org.jetbrains.kotlin.ir.expressions.impl.IrReturnImpl
+import org.jetbrains.kotlin.ir.symbols.*
+import org.jetbrains.kotlin.ir.types.*
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
@@ -173,149 +172,20 @@ class DelegationPlaygroundTransformer(
         return super.visitClassNew(declaration)
     }
 
-    private fun visitErasableDelegate(declaration: IrClass) {
-        messageCollector.report(CompilerMessageSeverity.WARNING, declaration.dumpKotlinLike())
+    val erasableDelegateInliner = ErasableDelegateInliner(context, messageCollector)
 
-        val field = declaration.properties.singleOrNull { it.backingField != null }
-        field ?: error("Erasable delegate ${declaration.kotlinFqName.asString()} must have a single field")
+    override fun visitPropertyNew(declaration: IrProperty): IrStatement {
+        if (declaration.isDelegated &&
+            declaration.backingField!!.type.classOrFail.owner.hasAnnotation(FqName(ErasableDelegate::class))) {
 
-        val getValue = declaration.findDeclaration<IrSimpleFunction> {
-            it.name == Name.identifier("getValue") && it.isOperator
+            erasableDelegateInliner(declaration)
         }
-        getValue
-            ?: error("No getValue operator function found for erasable delegate class ${declaration.kotlinFqName.asString()}")
-
-        val getterArgType = context.irBuiltIns.function(0).typeWith(field.type)
-        val setterArgType = context.irBuiltIns.function(1).typeWith(field.type, context.irBuiltIns.unitType)
-        val getValueImpl = declaration.addFunction {
-            updateFrom(getValue)
-            isOperator = false
-            modality = Modality.FINAL
-            isInline = true
-            name = Name.identifier("getValue-impl")
-            returnType = getValue.returnType
-        }.apply {
-            body = getValue.body?.patchDeclarationParents(this)
-
-
-            copyParameterDeclarationsFrom(getValue)
-            copyTypeParametersFrom(declaration)
-
-            val parameterRemapping = declaration.typeParameters
-                .zip(typeParameters.drop(getValue.typeParameters.size))
-                .toMap()
-
-            returnType = returnType.remapTypeParameters(getValue, this, parameterRemapping)
-            remapTypes(IrTypeParameterRemapper(parameterRemapping))
-
-            val getterP = addValueParameter {
-                name = Name.identifier("getter")
-                type = getterArgType
-            }
-            val setterP = addValueParameter {
-                name = Name.identifier("setter")
-                type = setterArgType
-            }
-
-            accept(object : IrElementTransformerVoidWithContext() {
-                fun doGet(): IrExpression {
-                    return currentScope!!.buildAStatement(context) {
-                        irMemberCallByName(
-                            irGet(getterP),
-                            "invoke",
-                            field.type
-                        )
-                    }
-                }
-
-                fun doSet(argument: IrExpression): IrExpression {
-                    return currentScope!!.buildAStatement(context) {
-                        irMemberCallByName(
-                            irGet(setterP),
-                            "invoke",
-                            irUnit().type,
-                            argument
-                        )
-                    }
-                }
-
-                override fun visitFunctionNew(declaration: IrFunction): IrStatement {
-                    declaration.transformChildren(this, null)
-                    return declaration
-                }
-
-                override fun visitCall(expression: IrCall): IrExpression {
-                    if (expression.symbol == field.setter?.symbol) {
-                        return doSet(expression.getValueArgument(0)!!)
-                    }
-                    if (expression.symbol == field.getter?.symbol) {
-                        return doGet()
-                    }
-                    return super.visitCall(expression)
-                }
-
-                override fun visitGetField(expression: IrGetField): IrExpression {
-                    return doGet()
-                }
-
-                override fun visitSetField(expression: IrSetField): IrExpression {
-                    return doSet(expression.value)
-                }
-            }, null)
-
-        }
-        getValue.buildBlockBody(context) {
-            val getterLambda = irLambda(getterArgType) {
-                buildExpressionBody(context) {
-                    when (val getter = field.getter) {
-                        null -> {
-                            irGetField(irGet(getValue.dispatchReceiverParameter!!), field.backingField!!)
-                        }
-                        else -> {
-                            irCall(getter).apply {
-                                dispatchReceiver = irGet(getValue.dispatchReceiverParameter!!)
-                            }
-                        }
-                    }
-                }
-            }
-
-            val setterLambda = irLambda(setterArgType) {
-                addValueParameter {
-                    name = Name.identifier("value")
-                    type = field.type
-                }
-                buildBlockBody(context) {
-                    when (val setter = field.setter) {
-                        null -> {
-                            +irSetField(
-                                irGet(getValue.dispatchReceiverParameter!!),
-                                field.backingField!!,
-                                irArg(0)
-                            )
-                        }
-                        else -> {
-                            +irCall(setter).apply {
-                                dispatchReceiver = irGet(getValue.dispatchReceiverParameter!!)
-                                valueArguments(irArg(0))
-                            }
-                        }
-                    }
-
-                }
-            }
-            +irReturn(
-                irCall(getValueImpl.symbol, getValue.returnType).apply {
-                    passTypeArgumentsFrom(getValue)
-                    passTypeArgumentsFrom(declaration, getValue.typeParameters.size)
-                    valueArguments(irArgs() + getterLambda + setterLambda)
-                }
-            )
-        }
-
-        messageCollector.report(CompilerMessageSeverity.ERROR, declaration.dumpKotlinLike())
-
+        return super.visitPropertyNew(declaration)
     }
+
+    val erasableDelegates = ErasableDelegateCompiler(context, messageCollector)
+
+    private fun visitErasableDelegate(declaration: IrClass) = erasableDelegates(declaration)
 
 }
 
