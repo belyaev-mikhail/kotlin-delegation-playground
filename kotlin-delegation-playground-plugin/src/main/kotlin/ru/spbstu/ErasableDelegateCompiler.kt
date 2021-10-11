@@ -15,11 +15,13 @@ import org.jetbrains.kotlin.ir.builders.declarations.addFunction
 import org.jetbrains.kotlin.ir.builders.declarations.addValueParameter
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrFunction
+import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.expressions.impl.IrReturnImpl
 import org.jetbrains.kotlin.ir.symbols.IrFunctionSymbol
 import org.jetbrains.kotlin.ir.symbols.IrValueSymbol
+import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.typeWith
 import org.jetbrains.kotlin.ir.util.*
 import org.jetbrains.kotlin.name.Name
@@ -28,38 +30,33 @@ class ErasableDelegateCompiler(
     val context: IrPluginContext,
     val messageCollector: MessageCollector)  {
 
-    operator fun invoke(declaration: IrClass) {
-        messageCollector.report(CompilerMessageSeverity.WARNING, declaration.dumpKotlinLike())
+    private fun getterType(valueType: IrType) =
+        context.irBuiltIns.function(0).typeWith(valueType)
+    private fun setterType(valueType: IrType) =
+        context.irBuiltIns.function(1).typeWith(valueType, context.irBuiltIns.unitType)
 
-        val field = declaration.properties.singleOrNull { it.backingField != null }
-        field ?: error("Erasable delegate ${declaration.kotlinFqName.asString()} must have a single field")
+    fun generateImpl(declaration: IrClass, field: IrProperty, existing: IrSimpleFunction): IrSimpleFunction {
+        val getterArgType = getterType(field.type)
+        val setterArgType = setterType(field.type)
 
-        val getValue = declaration.findDeclaration<IrSimpleFunction> {
-            it.name == Name.identifier("getValue") && it.isOperator
-        }
-        getValue
-            ?: error("No getValue operator function found for erasable delegate class ${declaration.kotlinFqName.asString()}")
-
-        val getterArgType = context.irBuiltIns.function(0).typeWith(field.type)
-        val setterArgType = context.irBuiltIns.function(1).typeWith(field.type, context.irBuiltIns.unitType)
-        val getValueImpl = declaration.addFunction {
-            updateFrom(getValue)
+        return declaration.addFunction {
+            updateFrom(existing)
             isOperator = false
             modality = Modality.FINAL
             isInline = true
             name = Name.identifier("getValue-impl")
-            returnType = getValue.returnType
+            returnType = existing.returnType
         }.apply {
             val getValueImpl = this
-            copyParameterDeclarationsFrom(getValue)
+            copyParameterDeclarationsFrom(existing)
             copyTypeParametersFrom(declaration)
             dispatchReceiverParameter = null
 
-            body = getValue.body?.deepCopyWithSymbols(this, object: DeepCopySymbolRemapper() {
-                val valueParameterSymbols = getValue.valueParameters.withIndex().associate { (i, v) -> v.symbol to i }
+            body = existing.body?.deepCopyWithSymbols(this, object: DeepCopySymbolRemapper() {
+                val valueParameterSymbols = existing.valueParameters.withIndex().associate { (i, v) -> v.symbol to i }
 
                 override fun getReferencedFunction(symbol: IrFunctionSymbol): IrFunctionSymbol {
-                    if (symbol == getValue.symbol) return getValueImpl.symbol
+                    if (symbol == existing.symbol) return getValueImpl.symbol
                     return super.getReferencedFunction(symbol)
                 }
 
@@ -71,10 +68,10 @@ class ErasableDelegateCompiler(
             })
 
             val parameterRemapping = declaration.typeParameters
-                .zip(typeParameters.drop(getValue.typeParameters.size))
+                .zip(typeParameters.drop(existing.typeParameters.size))
                 .toMap()
 
-            returnType = returnType.remapTypeParameters(getValue, this, parameterRemapping)
+            returnType = returnType.remapTypeParameters(existing, this, parameterRemapping)
             remapTypes(IrTypeParameterRemapper(parameterRemapping))
 
             val getterP = addValueParameter {
@@ -134,6 +131,23 @@ class ErasableDelegateCompiler(
             }, null)
 
         }
+    }
+
+    operator fun invoke(declaration: IrClass) {
+        messageCollector.report(CompilerMessageSeverity.WARNING, declaration.dumpKotlinLike())
+
+        val field = declaration.properties.singleOrNull { it.backingField != null }
+        field ?: error("Erasable delegate ${declaration.kotlinFqName.asString()} must have a single field")
+
+        val getValue = declaration.findDeclaration<IrSimpleFunction> {
+            it.name == Name.identifier("getValue") && it.isOperator
+        }
+        getValue
+            ?: error("No getValue operator function found for erasable delegate class ${declaration.kotlinFqName.asString()}")
+
+        val getterArgType = getterType(field.type)
+        val setterArgType = setterType(field.type)
+        val getValueImpl = generateImpl(declaration, field, getValue)
         getValue.buildBlockBody(context) {
             val getterLambda = irLambda(getterArgType) {
                 buildExpressionBody(context) {
